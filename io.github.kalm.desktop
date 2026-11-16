@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kalm
+GenericName=Управление наушниками
+Comment=Режимы шумоподавления, заряд и управление наушниками vivo / iQOO TWS
+Exec=kalm
+Icon=audio-headset
+Terminal=false
+Categories=Qt;KDE;AudioVideo;Audio;Settings;HardwareSettings;
+Keywords=kalm;vivo;iqoo;tws;anc;bluetooth;наушники;шумоподавление;
+StartupNotify=true

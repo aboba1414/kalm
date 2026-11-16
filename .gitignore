@@ -1,9 +1,7 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
 build/
-.venv/
-.pytest_cache/
+dist/
+*.o
+*.a
+*.so
 *.sock
+kalm-*-linux-x86_64*
