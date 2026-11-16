@@ -9,10 +9,10 @@ Kirigami.ApplicationWindow {
     id: root
 
     title: backend.deviceName ? (backend.deviceName + " — Kalm") : "Kalm"
-    width: Kirigami.Units.gridUnit * 31
-    height: Kirigami.Units.gridUnit * 40
-    minimumWidth: Kirigami.Units.gridUnit * 24
-    minimumHeight: Kirigami.Units.gridUnit * 28
+    width: Kirigami.Units.gridUnit * 26
+    height: Kirigami.Units.gridUnit * 32
+    minimumWidth: Kirigami.Units.gridUnit * 22
+    minimumHeight: Kirigami.Units.gridUnit * 24
 
     onClosing: function(close) {
         if (!backend.quitting) {
@@ -84,7 +84,8 @@ Kirigami.ApplicationWindow {
     // ---- Main Kirigami FormCard Page ----
     pageStack.initialPage: FormCard.FormCardPage {
         id: mainPage
-        title: backend.deviceName || "Kalm"
+        title: "Kalm"
+        verticalScrollBarPolicy: Controls.ScrollBar.AlwaysOff
 
         actions: [
             Kirigami.Action {
@@ -124,23 +125,47 @@ Kirigami.ApplicationWindow {
             }
         }
 
-        // ---- Connection Status Header Card ----
+        // ---- Connection Status Header Card (Centered) ----
         FormCard.FormCard {
             Layout.topMargin: Kirigami.Units.largeSpacing
 
-            FormCard.FormTextDelegate {
-                text: backend.deviceName || "Наушники не выбраны"
-                description: backend.statusSummary
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
+                Layout.bottomMargin: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
+                Layout.leftMargin: Kirigami.Units.largeSpacing
+                Layout.rightMargin: Kirigami.Units.largeSpacing
+                spacing: Kirigami.Units.smallSpacing
 
-                leading: Kirigami.Icon {
+                Kirigami.Icon {
                     source: "audio-headset"
+                    Layout.alignment: Qt.AlignHCenter
                     implicitWidth: Kirigami.Units.iconSizes.medium
                     implicitHeight: Kirigami.Units.iconSizes.medium
                     opacity: backend.connected ? 1.0 : 0.55
                 }
 
-                trailing: Controls.Button {
+                Kirigami.Heading {
+                    level: 2
+                    text: backend.deviceName || "Наушники не выбраны"
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Controls.Label {
+                    text: backend.statusSummary
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    opacity: 0.75
+                    Layout.fillWidth: true
+                }
+
+                Controls.Button {
                     visible: !backend.connected && backend.deviceMac.length > 0
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: Kirigami.Units.smallSpacing
                     text: "Подключить BT"
                     icon.name: "network-bluetooth-activated-symbolic"
                     onClicked: backend.connectBluetoothDevice(backend.deviceMac)
@@ -172,6 +197,8 @@ Kirigami.ApplicationWindow {
         // ---- Primary Section: Noise Cancellation Selector ----
         FormCard.FormHeader {
             title: "Режим шумоподавления"
+            topPadding: Kirigami.Units.largeSpacing
+            bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
@@ -205,6 +232,8 @@ Kirigami.ApplicationWindow {
         // ---- Sound & Controls Section ----
         FormCard.FormHeader {
             title: "Звук и управление"
+            topPadding: Kirigami.Units.largeSpacing
+            bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
@@ -262,6 +291,8 @@ Kirigami.ApplicationWindow {
         // ---- Saved Earbuds Section (Multi-Device Management) ----
         FormCard.FormHeader {
             title: "Мои наушники"
+            topPadding: Kirigami.Units.largeSpacing
+            bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
@@ -281,11 +312,13 @@ Kirigami.ApplicationWindow {
                     FormCard.FormTextDelegate {
                         text: modelData.displayName
                         description: modelData.mac + " · " + (modelData.btConnected ? "Подключено по Bluetooth" : "Не в сети")
+                        leadingPadding: Kirigami.Units.largeSpacing * 1.5
 
                         leading: Kirigami.Icon {
                             source: modelData.active ? "emblem-checked" : "audio-headset"
                             implicitWidth: Kirigami.Units.iconSizes.smallMedium
                             implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                            Layout.leftMargin: Kirigami.Units.smallSpacing
                         }
 
                         trailing: RowLayout {
@@ -344,7 +377,9 @@ Kirigami.ApplicationWindow {
 
         // ---- Dual-Connection Multipoint Section ----
         FormCard.FormHeader {
-            title: "Мультипоинт (два источника)"
+            title: "Мультипоинт"
+            topPadding: Kirigami.Units.largeSpacing
+            bottomPadding: Kirigami.Units.largeSpacing + 2
             visible: backend.connected && backend.multipointDevices.length > 0
         }
 
@@ -367,6 +402,7 @@ Kirigami.ApplicationWindow {
                     FormCard.FormTextDelegate {
                         text: modelData.name
                         description: modelData.mac + " · " + modelData.statusText
+                        leadingPadding: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
 
                         leading: Kirigami.Icon {
                             source: modelData.connected ? "network-connect-symbolic" : "network-disconnect-symbolic"
@@ -387,6 +423,8 @@ Kirigami.ApplicationWindow {
         // ---- Find My Earbuds Section ----
         FormCard.FormHeader {
             title: "Поиск устройства"
+            topPadding: Kirigami.Units.largeSpacing
+            bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
@@ -431,6 +469,7 @@ Kirigami.ApplicationWindow {
                 FormCard.FormTextDelegate {
                     text: modelData.name
                     description: modelData.subtitle
+                    leadingPadding: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
 
                     leading: Kirigami.Icon {
                         source: modelData.isVivo ? "audio-headset" : "preferences-system-bluetooth"
