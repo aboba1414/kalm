@@ -222,7 +222,7 @@ Kirigami.ApplicationWindow {
 
                 contentItem: Item {
                     id: selectorTrack
-                    implicitHeight: Kirigami.Units.gridUnit * 2.2
+                    implicitHeight: Kirigami.Units.gridUnit * 2.9
 
                     readonly property real gap: Kirigami.Units.smallSpacing
                     readonly property real cellW: Math.max(0, (width - gap * 2) / 3)
@@ -286,21 +286,22 @@ Kirigami.ApplicationWindow {
                                 }
                             }
 
-                            Row {
+                            Column {
                                 id: segContent
                                 anchors.centerIn: parent
-                                spacing: Kirigami.Units.smallSpacing + 2
+                                spacing: 3
 
                                 Kirigami.Icon {
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.horizontalCenter: parent.horizontalCenter
                                     source: segCell.modelData.iconName
-                                    width: Kirigami.Units.iconSizes.sizeForLabels
-                                    height: Kirigami.Units.iconSizes.sizeForLabels
+                                    width: Kirigami.Units.iconSizes.smallMedium
+                                    height: Kirigami.Units.iconSizes.smallMedium
                                     color: segCell.isSelected ? Kirigami.Theme.hoverColor : Kirigami.Theme.textColor
                                 }
 
                                 Controls.Label {
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    horizontalAlignment: Text.AlignHCenter
                                     text: segCell.modelData.label
                                     font.weight: segCell.isSelected ? Font.DemiBold : Font.Normal
                                     color: Kirigami.Theme.textColor
