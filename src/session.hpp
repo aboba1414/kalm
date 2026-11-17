@@ -103,7 +103,7 @@ private:
 
 class IpcServer {
 public:
-    IpcServer(KalmSession& session, std::function<void()> onShowWindow = {});
+    IpcServer(KalmSession& session, std::function<void(const QString&)> onShowWindow = {});
     ~IpcServer();
 
     bool start();
@@ -115,7 +115,7 @@ private:
     QJsonObject dispatch(const QJsonObject& req);
 
     KalmSession& m_session;
-    std::function<void()> m_onShowWindow;
+    std::function<void(const QString&)> m_onShowWindow;
     QString m_path;
     int m_serverFd = -1;
     std::atomic<bool> m_stop{false};

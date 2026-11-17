@@ -49,7 +49,15 @@ target_link_libraries(kalm PRIVATE
 )
 
 install(TARGETS kalm RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES io.github.kalm.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+install(CODE "
+    set(_kalm_exec \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/kalm\")
+    file(READ \"${CMAKE_CURRENT_SOURCE_DIR}/io.github.kalm.desktop.in\" _desktop_in)
+    string(REPLACE \"@CMAKE_INSTALL_FULL_BINDIR@/kalm\" \"\${_kalm_exec}\" _desktop_out \"\${_desktop_in}\")
+    set(_apps_dir \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATAROOTDIR}/applications\")
+    file(MAKE_DIRECTORY \"\${_apps_dir}\")
+    file(WRITE \"\${_apps_dir}/io.github.kalm.desktop\" \"\${_desktop_out}\")
+    message(STATUS \"Installing: \${_apps_dir}/io.github.kalm.desktop (Exec=\${_kalm_exec})\")
+")
 install(DIRECTORY translations/ DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/kalm/translations)
 
 option(BUILD_TESTING "Build unit tests" ON)

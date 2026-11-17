@@ -203,7 +203,11 @@ void printHelp() {
 
 int launchGui(const QString& targetDevice, bool startMinimized, const QString& langOverride, int argc, char** argv) {
     if (targetDevice.isEmpty()) {
-        const auto existing = kalm::ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("show")}}, 500);
+        const QString token = qEnvironmentVariable("XDG_ACTIVATION_TOKEN");
+        const auto existing = kalm::ipcRequest(
+            QJsonObject{{QStringLiteral("cmd"), QStringLiteral("show")},
+                        {QStringLiteral("token"), token}},
+            500);
         if (existing && existing->value(QStringLiteral("ok")).toBool()) {
             return 0;
         }
@@ -251,7 +255,7 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     backendPtr = &backend;
 
     kalm::KalmTrayController tray(session, backend);
-    kalm::IpcServer ipc(session, [&]() { backend.pushShowFromWorker(); });
+    kalm::IpcServer ipc(session, [&](const QString& token) { backend.pushShowFromWorker(token); });
     ipc.start();
     session.start();
 

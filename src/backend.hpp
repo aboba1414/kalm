@@ -78,7 +78,7 @@ public:
     void pushStateFromWorker(const EarbudState& st);
     void pushDevicesRefreshFromWorker();
     void pushErrorFromWorker(const QString& msg);
-    void pushShowFromWorker();
+    void pushShowFromWorker(const QString& activationToken = {});
 
     QVariantMap i18n() const;
     QVariantList languageModel() const { return m_languageModel; }

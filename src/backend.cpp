@@ -210,8 +210,16 @@ void KalmBackend::pushErrorFromWorker(const QString& msg) {
     QMetaObject::invokeMethod(this, [this, msg]() { setBannerMain(msg, 2); }, Qt::QueuedConnection);
 }
 
-void KalmBackend::pushShowFromWorker() {
-    QMetaObject::invokeMethod(this, &KalmBackend::windowShowRequested, Qt::QueuedConnection);
+void KalmBackend::pushShowFromWorker(const QString& activationToken) {
+    QMetaObject::invokeMethod(
+        this,
+        [this, activationToken]() {
+            if (!activationToken.isEmpty()) {
+                qputenv("XDG_ACTIVATION_TOKEN", activationToken.toUtf8());
+            }
+            Q_EMIT windowShowRequested();
+        },
+        Qt::QueuedConnection);
 }
 
 void KalmBackend::setBannerMain(const QString& text, int type) {

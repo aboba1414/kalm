@@ -636,7 +636,7 @@ void KalmSession::handleFrames(const QList<Frame>& frames) {
 
 // ---- IpcServer ----
 
-IpcServer::IpcServer(KalmSession& session, std::function<void()> onShowWindow)
+IpcServer::IpcServer(KalmSession& session, std::function<void(const QString&)> onShowWindow)
     : m_session(session), m_onShowWindow(std::move(onShowWindow)), m_path(ipcSocketPath()) {}
 
 IpcServer::~IpcServer() { stop(); }
@@ -733,7 +733,7 @@ QJsonObject IpcServer::dispatch(const QJsonObject& req) {
         return QJsonObject{{QStringLiteral("ok"), true}};
     }
     if (cmd == u"show") {
-        if (m_onShowWindow) m_onShowWindow();
+        if (m_onShowWindow) m_onShowWindow(req.value(QStringLiteral("token")).toString());
         return QJsonObject{{QStringLiteral("ok"), true}};
     }
     if (cmd == u"status") {

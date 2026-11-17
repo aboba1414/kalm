@@ -15,6 +15,47 @@ Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlli
 
 ---
 
+## Quick Start & Running
+
+**From a GitHub Release binary (no build required):**
+1. Install runtime packages for your distro (see [Dependencies](#dependencies) below).
+2. Download `kalm-linux-x86_64` from [Releases](https://github.com/p4radigma/kalm/releases), make it executable, and run:
+   ```bash
+   chmod +x kalm-linux-x86_64
+   ./kalm-linux-x86_64
+   ```
+
+**After installing (`kalm` in `PATH` and Application Menu):**
+```bash
+kalm                                         # Launch GUI (or raise existing window)
+kalm --minimized                             # Start minimized to system tray (ideal for autostart)
+kalm status [--json]                         # Show battery, ANC mode/level, multipoint
+kalm anc [adaptive|mild|standard|deep|plane|metro|bus] [--notify]
+kalm trans [standard|voice] [--notify]
+kalm off [--notify]
+kalm toggle [--modes anc,trans] [--notify]   # Cycle modes (ideal for global shortcuts)
+kalm eq master                               # standard | vocal | bass | treble | audiobook | master
+kalm game on | off                           # Low-latency game mode
+kalm lang en | ru | auto                     # Persist interface language
+kalm probe [-d <MAC|name>] [--listen 15]     # Privacy-safe protocol dump for new earbuds
+kalm devices [list|scan|add <MAC> --alias <name>|use <name>|rename <name> <new>|remove <name>]
+```
+
+---
+
+## Supported Devices
+
+| Status | Earbud Models |
+|---|---|
+| **Verified on Hardware** | **vivo TWS 5 Hi-Fi** (all ANC intensities & scenes, Vocal transparency, DeepX / Master Hi-Fi, Game Mode, Multipoint, Wear state, Battery) |
+| **Supported (GAIA v4 Profile)** | **vivo TWS 5**, **vivo TWS 5 Pro**, **vivo TWS 5e**, **vivo TWS 4**, **vivo TWS 4 Hi-Fi**, **vivo TWS 3**, **vivo TWS 3 Pro**, **iQOO TWS 5**, **iQOO TWS 5e**, **iQOO TWS 2**, **iQOO TWS 1**, **iQOO TWS 1e**, **vivo / iQOO Headphones** |
+| **Supported (GAIA v3 Profiles)** | **vivo TWS 3e**, **vivo TWS Air3 Pro**, **iQOO TWS Air3 Pro** |
+| **Battery / EQ / Multipoint Only** | Non-ANC GAIA models (*vivo TWS 5i / 3i / Air3 / Air2*, *iQOO TWS 5i / 1i / Air3*) |
+
+*Have another vivo / iQOO model? Run `kalm probe` and open a [New Earbud Model Support](#requesting-support-for-new-earbuds-what-users-need-to-do) issue.*
+
+---
+
 ## Dependencies
 
 | Scope | Packages / Components |
@@ -71,25 +112,6 @@ cmake --build build -j$(nproc)
 sudo cmake --install build
 ```
 *(User-local install without root: `cmake --install build --prefix ~/.local`)*
-
----
-
-## Usage
-
-```bash
-kalm                                         # Launch GUI (or raise existing window)
-kalm --minimized                             # Start minimized to system tray
-kalm status [--json]                         # Show battery, ANC mode/level, multipoint
-kalm anc [adaptive|mild|standard|deep|plane|metro|bus] [--notify]
-kalm trans [standard|voice] [--notify]
-kalm off [--notify]
-kalm toggle [--modes anc,trans] [--notify]   # Cycle modes (ideal for global shortcuts)
-kalm eq master                               # standard | vocal | bass | treble | audiobook | master
-kalm game on | off                           # Low-latency game mode
-kalm lang en | ru | auto                     # Persist interface language
-kalm probe [-d <MAC|name>] [--listen 15]     # Privacy-safe protocol dump for new earbuds
-kalm devices [list|scan|add <MAC> --alias <name>|use <name>|rename <name> <new>|remove <name>]
-```
 
 ---
 
