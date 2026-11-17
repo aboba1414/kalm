@@ -2,6 +2,12 @@
 
 Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlling active noise cancellation (ANC), sound profiles, and device settings on **vivo / iQOO TWS** earbuds (verified on *vivo TWS 5 Hi-Fi*) over Bluetooth RFCOMM (Compact GAIA protocol).
 
+> **Note:** This project was built with the assistance of AI and is intended primarily for personal use.
+
+<p align="center">
+  <img src="assets/screenshot.png" alt="Kalm Screenshot" width="520">
+</p>
+
 ## Features
 - **Noise Control & Official ANC Levels**:
   - *Noise Cancelling (ANC)* with all official intensity & environment presets: **Adaptive**, **Mild**, **Standard**, **Deep**, **Deep (Airplane)**, **Deep (Metro)**, **Deep (Bus / Transit)**.
