@@ -211,28 +211,112 @@ Kirigami.ApplicationWindow {
             maximumWidth: root.cardMaxW
             enabled: backend.connected
 
-            FormCard.FormRadioSelectorDelegate {
-                id: noiseSelector
-                consistentWidth: true
-                selectedIndex: backend.noiseModeIndex
+            // Custom pixel-centered 3-segment Kirigami selector (avoids upstream RadioSelector asymmetric margins)
+            FormCard.AbstractFormDelegate {
+                id: noiseSelectorDelegate
+                background: null
+                topPadding: Kirigami.Units.largeSpacing
+                bottomPadding: Kirigami.Units.largeSpacing
+                leftPadding: Kirigami.Units.largeSpacing
+                rightPadding: Kirigami.Units.largeSpacing
 
-                actions: [
-                    Kirigami.Action {
-                        text: root.i18n.mode_anc
-                        icon.name: "microphone-sensitivity-muted-symbolic"
-                        onTriggered: backend.setNoiseByIndex(0)
-                    },
-                    Kirigami.Action {
-                        text: root.i18n.mode_off
-                        icon.name: "audio-headphones-symbolic"
-                        onTriggered: backend.setNoiseByIndex(1)
-                    },
-                    Kirigami.Action {
-                        text: root.i18n.mode_trans
-                        icon.name: "microphone-sensitivity-high-symbolic"
-                        onTriggered: backend.setNoiseByIndex(2)
+                contentItem: Item {
+                    id: selectorTrack
+                    implicitHeight: Kirigami.Units.gridUnit * 2.2
+
+                    readonly property real gap: Kirigami.Units.smallSpacing
+                    readonly property real cellW: Math.max(0, (width - gap * 2) / 3)
+                    readonly property var modeItems: [
+                        { label: root.i18n.mode_anc, iconName: "microphone-sensitivity-muted-symbolic", modeIdx: 0 },
+                        { label: root.i18n.mode_off, iconName: "audio-headphones-symbolic", modeIdx: 1 },
+                        { label: root.i18n.mode_trans, iconName: "microphone-sensitivity-high-symbolic", modeIdx: 2 }
+                    ]
+
+                    Kirigami.ShadowedRectangle {
+                        id: activePill
+                        visible: backend.noiseModeIndex >= 0 && backend.noiseModeIndex <= 2
+                        x: Math.max(0, backend.noiseModeIndex) * (selectorTrack.cellW + selectorTrack.gap)
+                        y: 0
+                        width: selectorTrack.cellW
+                        height: selectorTrack.height
+                        radius: Kirigami.Units.cornerRadius
+
+                        color: Kirigami.ColorUtils.linearInterpolation(Kirigami.Theme.hoverColor, Kirigami.Theme.backgroundColor, 0.8)
+                        border {
+                            width: 1
+                            color: Kirigami.ColorUtils.linearInterpolation(Kirigami.Theme.hoverColor, Kirigami.Theme.backgroundColor, 0.5)
+                        }
+                        shadow {
+                            size: 7
+                            yOffset: 2
+                            color: Qt.rgba(0, 0, 0, 0.15)
+                        }
+
+                        Behavior on x {
+                            NumberAnimation {
+                                duration: Kirigami.Units.longDuration
+                                easing.type: Easing.InOutCubic
+                            }
+                        }
                     }
-                ]
+
+                    Repeater {
+                        model: selectorTrack.modeItems
+
+                        delegate: Item {
+                            id: segCell
+                            required property var modelData
+                            required property int index
+
+                            readonly property bool isSelected: backend.noiseModeIndex === modelData.modeIdx
+
+                            x: index * (selectorTrack.cellW + selectorTrack.gap)
+                            y: 0
+                            width: selectorTrack.cellW
+                            height: selectorTrack.height
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: Kirigami.Units.cornerRadius
+                                color: Kirigami.Theme.textColor
+                                opacity: (!segCell.isSelected && segMouse.containsMouse) ? 0.08 : 0
+
+                                Behavior on opacity {
+                                    NumberAnimation { duration: Kirigami.Units.shortDuration }
+                                }
+                            }
+
+                            Row {
+                                id: segContent
+                                anchors.centerIn: parent
+                                spacing: Kirigami.Units.smallSpacing + 2
+
+                                Kirigami.Icon {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    source: segCell.modelData.iconName
+                                    width: Kirigami.Units.iconSizes.sizeForLabels
+                                    height: Kirigami.Units.iconSizes.sizeForLabels
+                                    color: segCell.isSelected ? Kirigami.Theme.hoverColor : Kirigami.Theme.textColor
+                                }
+
+                                Controls.Label {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: segCell.modelData.label
+                                    font.weight: segCell.isSelected ? Font.DemiBold : Font.Normal
+                                    color: Kirigami.Theme.textColor
+                                }
+                            }
+
+                            MouseArea {
+                                id: segMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: backend.setNoiseByIndex(segCell.modelData.modeIdx)
+                            }
+                        }
+                    }
+                }
             }
 
             FormCard.FormDelegateSeparator {
@@ -248,8 +332,16 @@ Kirigami.ApplicationWindow {
                 textRole: "text"
                 valueRole: "value"
                 currentIndex: backend.ancLevelIndex
+                displayText: (backend.ancLevelIndex >= 0 && backend.ancLevelIndex < backend.ancLevelModel.length)
+                             ? backend.ancLevelModel[backend.ancLevelIndex].text : ""
+                onModelChanged: Qt.callLater(function() { ancLevelCombo.currentIndex = backend.ancLevelIndex })
                 onActivated: function(index) {
                     backend.setAncLevelByIndex(index)
+                }
+                Connections {
+                    target: backend
+                    function onStateChanged() { ancLevelCombo.currentIndex = backend.ancLevelIndex }
+                    function onLanguageChanged() { Qt.callLater(function() { ancLevelCombo.currentIndex = backend.ancLevelIndex }) }
                 }
             }
 
@@ -266,8 +358,16 @@ Kirigami.ApplicationWindow {
                 textRole: "text"
                 valueRole: "value"
                 currentIndex: backend.transEffectIndex
+                displayText: (backend.transEffectIndex >= 0 && backend.transEffectIndex < backend.transEffectModel.length)
+                             ? backend.transEffectModel[backend.transEffectIndex].text : ""
+                onModelChanged: Qt.callLater(function() { transEffectCombo.currentIndex = backend.transEffectIndex })
                 onActivated: function(index) {
                     backend.setTransEffectByIndex(index)
+                }
+                Connections {
+                    target: backend
+                    function onStateChanged() { transEffectCombo.currentIndex = backend.transEffectIndex }
+                    function onLanguageChanged() { Qt.callLater(function() { transEffectCombo.currentIndex = backend.transEffectIndex }) }
                 }
             }
         }
@@ -292,8 +392,16 @@ Kirigami.ApplicationWindow {
                 textRole: "text"
                 valueRole: "value"
                 currentIndex: backend.eqIndex
+                displayText: (backend.eqIndex >= 0 && backend.eqIndex < backend.eqModel.length)
+                             ? backend.eqModel[backend.eqIndex].text : ""
+                onModelChanged: Qt.callLater(function() { eqCombo.currentIndex = backend.eqIndex })
                 onActivated: function(index) {
                     backend.setEqByIndex(index)
+                }
+                Connections {
+                    target: backend
+                    function onStateChanged() { eqCombo.currentIndex = backend.eqIndex }
+                    function onLanguageChanged() { Qt.callLater(function() { eqCombo.currentIndex = backend.eqIndex }) }
                 }
             }
 
@@ -307,8 +415,16 @@ Kirigami.ApplicationWindow {
                 textRole: "text"
                 valueRole: "value"
                 currentIndex: backend.cycleIndex
+                displayText: (backend.cycleIndex >= 0 && backend.cycleIndex < backend.cycleModel.length)
+                             ? backend.cycleModel[backend.cycleIndex].text : ""
+                onModelChanged: Qt.callLater(function() { cycleCombo.currentIndex = backend.cycleIndex })
                 onActivated: function(index) {
                     backend.setCycleByIndex(index)
+                }
+                Connections {
+                    target: backend
+                    function onStateChanged() { cycleCombo.currentIndex = backend.cycleIndex }
+                    function onLanguageChanged() { Qt.callLater(function() { cycleCombo.currentIndex = backend.cycleIndex }) }
                 }
             }
 
@@ -510,14 +626,26 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormComboBoxDelegate {
                 id: langCombo
+                objectName: "langCombo"
                 text: root.i18n.lang_title
                 description: root.i18n.lang_desc
                 model: backend.languageModel
                 textRole: "text"
                 valueRole: "value"
                 currentIndex: backend.languageIndex
+                displayText: (backend.languageIndex >= 0 && backend.languageIndex < backend.languageModel.length)
+                             ? backend.languageModel[backend.languageIndex].text : ""
+                onModelChanged: Qt.callLater(function() { langCombo.currentIndex = backend.languageIndex })
                 onActivated: function(index) {
                     backend.setLanguageByIndex(index)
+                }
+                Connections {
+                    target: backend
+                    function onLanguageChanged() {
+                        Qt.callLater(function() {
+                            langCombo.currentIndex = backend.languageIndex
+                        })
+                    }
                 }
             }
         }
