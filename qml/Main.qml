@@ -8,10 +8,13 @@ import org.kde.kirigamiaddons.formcard as FormCard
 Kirigami.ApplicationWindow {
     id: root
 
+    readonly property var i18n: backend.i18n
+    readonly property real cardMaxW: Kirigami.Units.gridUnit * 32
+
     title: backend.deviceName ? (backend.deviceName + " — Kalm") : "Kalm"
-    width: Kirigami.Units.gridUnit * 26
+    width: Kirigami.Units.gridUnit * 34
     height: Kirigami.Units.gridUnit * 32
-    minimumWidth: Kirigami.Units.gridUnit * 22
+    minimumWidth: Kirigami.Units.gridUnit * 28
     minimumHeight: Kirigami.Units.gridUnit * 24
 
     onClosing: function(close) {
@@ -45,7 +48,7 @@ Kirigami.ApplicationWindow {
 
             Kirigami.Heading {
                 level: 4
-                text: i18n.window_my_earbuds
+                text: root.i18n.window_my_earbuds
                 Layout.leftMargin: Kirigami.Units.largeSpacing
                 Layout.topMargin: Kirigami.Units.smallSpacing
             }
@@ -53,7 +56,7 @@ Kirigami.ApplicationWindow {
 
         actions: [
             Kirigami.Action {
-                text: i18n.action_add_earbuds_ellipsis
+                text: root.i18n.action_add_earbuds_ellipsis
                 icon.name: "list-add-symbolic"
                 onTriggered: {
                     backend.scanBluetoothDevices()
@@ -61,7 +64,7 @@ Kirigami.ApplicationWindow {
                 }
             },
             Kirigami.Action {
-                text: i18n.action_kde_bt_settings
+                text: root.i18n.action_kde_bt_settings
                 icon.name: "preferences-system-bluetooth"
                 onTriggered: backend.openSystemBluetoothSettings()
             },
@@ -69,12 +72,12 @@ Kirigami.ApplicationWindow {
                 separator: true
             },
             Kirigami.Action {
-                text: i18n.action_minimize_tray
+                text: root.i18n.action_minimize_tray
                 icon.name: "window-minimize-symbolic"
                 onTriggered: root.visible = false
             },
             Kirigami.Action {
-                text: i18n.action_quit
+                text: root.i18n.action_quit
                 icon.name: "application-exit-symbolic"
                 onTriggered: backend.quitApp()
             }
@@ -89,7 +92,7 @@ Kirigami.ApplicationWindow {
 
         actions: [
             Kirigami.Action {
-                text: i18n.action_add_earbuds
+                text: root.i18n.action_add_earbuds
                 icon.name: "list-add-symbolic"
                 onTriggered: {
                     backend.scanBluetoothDevices()
@@ -97,7 +100,7 @@ Kirigami.ApplicationWindow {
                 }
             },
             Kirigami.Action {
-                text: backend.connected ? i18n.action_refresh : i18n.action_connect
+                text: backend.connected ? root.i18n.action_refresh : root.i18n.action_connect
                 icon.name: "view-refresh-symbolic"
                 onTriggered: backend.refreshNow()
             }
@@ -127,6 +130,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Connection Status Header Card (Centered) ----
         FormCard.FormCard {
+            maximumWidth: root.cardMaxW
             Layout.topMargin: Kirigami.Units.largeSpacing
 
             ColumnLayout {
@@ -147,7 +151,7 @@ Kirigami.ApplicationWindow {
 
                 Kirigami.Heading {
                     level: 2
-                    text: backend.deviceName || i18n.status_no_device_selected
+                    text: backend.deviceName || root.i18n.status_no_device_selected
                     font.weight: Font.DemiBold
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
@@ -166,7 +170,7 @@ Kirigami.ApplicationWindow {
                     visible: !backend.connected && backend.deviceMac.length > 0
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: Kirigami.Units.smallSpacing
-                    text: i18n.action_connect_bt
+                    text: root.i18n.action_connect_bt
                     icon.name: "network-bluetooth-activated-symbolic"
                     onClicked: backend.connectBluetoothDevice(backend.deviceMac)
                 }
@@ -175,6 +179,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Battery Info Grid (Left / Right / Case) ----
         FormCard.FormGridContainer {
+            maximumWidth: root.cardMaxW
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.largeSpacing
 
@@ -196,12 +201,14 @@ Kirigami.ApplicationWindow {
 
         // ---- Primary Section: Noise Cancellation Selector + ANC Level / Transparency Mode ----
         FormCard.FormHeader {
-            title: i18n.section_noise
+            maximumWidth: root.cardMaxW
+            title: root.i18n.section_noise
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
+            maximumWidth: root.cardMaxW
             enabled: backend.connected
 
             FormCard.FormRadioSelectorDelegate {
@@ -211,17 +218,17 @@ Kirigami.ApplicationWindow {
 
                 actions: [
                     Kirigami.Action {
-                        text: i18n.mode_anc
+                        text: root.i18n.mode_anc
                         icon.name: "microphone-sensitivity-muted-symbolic"
                         onTriggered: backend.setNoiseByIndex(0)
                     },
                     Kirigami.Action {
-                        text: i18n.mode_off
+                        text: root.i18n.mode_off
                         icon.name: "audio-headphones-symbolic"
                         onTriggered: backend.setNoiseByIndex(1)
                     },
                     Kirigami.Action {
-                        text: i18n.mode_trans
+                        text: root.i18n.mode_trans
                         icon.name: "microphone-sensitivity-high-symbolic"
                         onTriggered: backend.setNoiseByIndex(2)
                     }
@@ -235,8 +242,8 @@ Kirigami.ApplicationWindow {
             FormCard.FormComboBoxDelegate {
                 id: ancLevelCombo
                 visible: backend.noiseModeIndex === 0
-                text: i18n.anc_level_title
-                description: i18n.anc_level_desc
+                text: root.i18n.anc_level_title
+                description: root.i18n.anc_level_desc
                 model: backend.ancLevelModel
                 textRole: "text"
                 valueRole: "value"
@@ -253,8 +260,8 @@ Kirigami.ApplicationWindow {
             FormCard.FormComboBoxDelegate {
                 id: transEffectCombo
                 visible: backend.noiseModeIndex === 2
-                text: i18n.trans_effect_title
-                description: i18n.trans_effect_desc
+                text: root.i18n.trans_effect_title
+                description: root.i18n.trans_effect_desc
                 model: backend.transEffectModel
                 textRole: "text"
                 valueRole: "value"
@@ -267,18 +274,20 @@ Kirigami.ApplicationWindow {
 
         // ---- Sound & Controls Section ----
         FormCard.FormHeader {
-            title: i18n.section_sound
+            maximumWidth: root.cardMaxW
+            title: root.i18n.section_sound
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
+            maximumWidth: root.cardMaxW
             enabled: backend.connected
 
             FormCard.FormComboBoxDelegate {
                 id: eqCombo
-                text: i18n.eq_title
-                description: i18n.eq_desc
+                text: root.i18n.eq_title
+                description: root.i18n.eq_desc
                 model: backend.eqModel
                 textRole: "text"
                 valueRole: "value"
@@ -292,8 +301,8 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormComboBoxDelegate {
                 id: cycleCombo
-                text: i18n.cycle_title
-                description: i18n.cycle_desc
+                text: root.i18n.cycle_title
+                description: root.i18n.cycle_desc
                 model: backend.cycleModel
                 textRole: "text"
                 valueRole: "value"
@@ -307,8 +316,8 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormSwitchDelegate {
                 id: gameSwitch
-                text: i18n.game_title
-                description: i18n.game_desc
+                text: root.i18n.game_title
+                description: root.i18n.game_desc
                 checked: backend.gameMode
                 onToggled: backend.setGameMode(checked)
             }
@@ -317,8 +326,8 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormSwitchDelegate {
                 id: wearSwitch
-                text: i18n.wear_detect_title
-                description: i18n.wear_detect_desc
+                text: root.i18n.wear_detect_title
+                description: root.i18n.wear_detect_desc
                 checked: backend.wearDetection
                 onToggled: backend.setWearDetection(checked)
             }
@@ -326,12 +335,15 @@ Kirigami.ApplicationWindow {
 
         // ---- Saved Earbuds Section (Multi-Device Management) ----
         FormCard.FormHeader {
-            title: i18n.section_devices
+            maximumWidth: root.cardMaxW
+            title: root.i18n.section_devices
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
+            maximumWidth: root.cardMaxW
+
             Repeater {
                 model: backend.savedDevices
 
@@ -347,7 +359,7 @@ Kirigami.ApplicationWindow {
 
                     FormCard.FormTextDelegate {
                         text: modelData.displayName
-                        description: modelData.mac + " · " + (modelData.btConnected ? i18n.status_connected_bt : i18n.status_offline)
+                        description: modelData.mac + " · " + (modelData.btConnected ? root.i18n.status_connected_bt : root.i18n.status_offline)
                         leadingPadding: Kirigami.Units.largeSpacing * 1.5
 
                         leading: Kirigami.Icon {
@@ -362,14 +374,14 @@ Kirigami.ApplicationWindow {
 
                             Controls.Button {
                                 visible: !modelData.active
-                                text: i18n.action_select
+                                text: root.i18n.action_select
                                 onClicked: backend.selectSavedDevice(modelData.mac)
                             }
 
                             Controls.ToolButton {
                                 icon.name: "edit-rename-symbolic"
                                 Controls.ToolTip.visible: hovered
-                                Controls.ToolTip.text: i18n.action_rename
+                                Controls.ToolTip.text: root.i18n.action_rename
                                 onClicked: {
                                     renameDialog.targetMac = modelData.mac
                                     renameField.text = modelData.alias.length > 0 ? modelData.alias : modelData.displayName
@@ -380,7 +392,7 @@ Kirigami.ApplicationWindow {
                             Controls.ToolButton {
                                 icon.name: "edit-delete-remove-symbolic"
                                 Controls.ToolTip.visible: hovered
-                                Controls.ToolTip.text: i18n.action_remove_from_list
+                                Controls.ToolTip.text: root.i18n.action_remove_from_list
                                 onClicked: backend.removeSavedDevice(modelData.mac)
                             }
                         }
@@ -393,8 +405,8 @@ Kirigami.ApplicationWindow {
             }
 
             FormCard.FormSwitchDelegate {
-                text: i18n.auto_switch_title
-                description: i18n.auto_switch_desc
+                text: root.i18n.auto_switch_title
+                description: root.i18n.auto_switch_desc
                 checked: backend.autoSwitch
                 onToggled: backend.setAutoSwitch(checked)
             }
@@ -402,7 +414,7 @@ Kirigami.ApplicationWindow {
             FormCard.FormDelegateSeparator {}
 
             FormCard.FormButtonDelegate {
-                text: i18n.action_add_earbuds_ellipsis
+                text: root.i18n.action_add_earbuds_ellipsis
                 icon.name: "list-add-symbolic"
                 onClicked: {
                     backend.scanBluetoothDevices()
@@ -413,13 +425,15 @@ Kirigami.ApplicationWindow {
 
         // ---- Dual-Connection Multipoint Section ----
         FormCard.FormHeader {
-            title: i18n.section_multipoint
+            maximumWidth: root.cardMaxW
+            title: root.i18n.section_multipoint
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
             visible: backend.connected && backend.multipointDevices.length > 0
         }
 
         FormCard.FormCard {
+            maximumWidth: root.cardMaxW
             visible: backend.connected && backend.multipointDevices.length > 0
 
             Repeater {
@@ -448,7 +462,7 @@ Kirigami.ApplicationWindow {
 
                         trailing: Controls.Button {
                             visible: !modelData.active
-                            text: modelData.connected ? i18n.action_disconnect : i18n.action_connect
+                            text: modelData.connected ? root.i18n.action_disconnect : root.i18n.action_connect
                             onClicked: backend.toggleMultipointDevice(modelData.mac, !modelData.connected)
                         }
                     }
@@ -458,18 +472,19 @@ Kirigami.ApplicationWindow {
 
         // ---- Find My Earbuds Section ----
         FormCard.FormHeader {
-            title: i18n.section_find
+            maximumWidth: root.cardMaxW
+            title: root.i18n.section_find
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
 
         FormCard.FormCard {
-            Layout.bottomMargin: Kirigami.Units.largeSpacing
+            maximumWidth: root.cardMaxW
             enabled: backend.connected
 
             FormCard.FormButtonDelegate {
-                text: backend.isRinging ? i18n.find_stop : i18n.find_start
-                description: i18n.find_desc
+                text: backend.isRinging ? root.i18n.find_stop : root.i18n.find_start
+                description: root.i18n.find_desc
                 icon.name: backend.isRinging ? "media-playback-stop-symbolic" : "preferences-desktop-notification-bell"
                 onClicked: {
                     if (backend.isRinging) {
@@ -480,16 +495,42 @@ Kirigami.ApplicationWindow {
                 }
             }
         }
+
+        // ---- Application Settings Section (Language) ----
+        FormCard.FormHeader {
+            maximumWidth: root.cardMaxW
+            title: root.i18n.section_settings
+            topPadding: Kirigami.Units.largeSpacing
+            bottomPadding: Kirigami.Units.largeSpacing + 2
+        }
+
+        FormCard.FormCard {
+            maximumWidth: root.cardMaxW
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
+
+            FormCard.FormComboBoxDelegate {
+                id: langCombo
+                text: root.i18n.lang_title
+                description: root.i18n.lang_desc
+                model: backend.languageModel
+                textRole: "text"
+                valueRole: "value"
+                currentIndex: backend.languageIndex
+                onActivated: function(index) {
+                    backend.setLanguageByIndex(index)
+                }
+            }
+        }
     }
 
     // ---- Dialog: Add Earbuds ----
     FormCard.FormCardDialog {
         id: addDeviceDialog
-        title: i18n.dlg_add_title
+        title: root.i18n.dlg_add_title
         standardButtons: Controls.Dialog.Close
 
         FormCard.FormSectionText {
-            text: i18n.dlg_add_hint
+            text: root.i18n.dlg_add_hint
         }
 
         Repeater {
@@ -514,7 +555,7 @@ Kirigami.ApplicationWindow {
                     }
 
                     trailing: Controls.Button {
-                        text: modelData.alreadySaved ? i18n.action_select : i18n.action_add
+                        text: modelData.alreadySaved ? root.i18n.action_select : root.i18n.action_add
                         icon.name: modelData.alreadySaved ? "dialog-ok-apply" : "list-add-symbolic"
                         onClicked: {
                             backend.addSavedDevice(modelData.mac, modelData.name, "")
@@ -528,7 +569,7 @@ Kirigami.ApplicationWindow {
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormButtonDelegate {
-            text: i18n.dlg_refresh_bt
+            text: root.i18n.dlg_refresh_bt
             icon.name: "view-refresh-symbolic"
             onClicked: backend.scanBluetoothDevices()
         }
@@ -537,18 +578,18 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormTextFieldDelegate {
             id: manualMacField
-            label: i18n.dlg_mac_label
+            label: root.i18n.dlg_mac_label
             placeholderText: "1C:BA:B8:0F:5A:0F"
         }
 
         FormCard.FormTextFieldDelegate {
             id: manualAliasField
-            label: i18n.dlg_alias_label
-            placeholderText: i18n.dlg_alias_placeholder
+            label: root.i18n.dlg_alias_label
+            placeholderText: root.i18n.dlg_alias_placeholder
         }
 
         FormCard.FormButtonDelegate {
-            text: i18n.dlg_add_by_mac
+            text: root.i18n.dlg_add_by_mac
             icon.name: "list-add-symbolic"
             enabled: manualMacField.text.trim().length >= 17
             onClicked: {
@@ -563,7 +604,7 @@ Kirigami.ApplicationWindow {
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormButtonDelegate {
-            text: i18n.dlg_pair_kde
+            text: root.i18n.dlg_pair_kde
             icon.name: "preferences-system-bluetooth"
             onClicked: backend.openSystemBluetoothSettings()
         }
@@ -573,7 +614,7 @@ Kirigami.ApplicationWindow {
     FormCard.FormCardDialog {
         id: renameDialog
         property string targetMac: ""
-        title: i18n.dlg_rename_title
+        title: root.i18n.dlg_rename_title
         standardButtons: Controls.Dialog.Save | Controls.Dialog.Cancel
 
         onAccepted: {
@@ -584,22 +625,22 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormTextFieldDelegate {
             id: renameField
-            label: i18n.dlg_rename_label
-            placeholderText: i18n.dlg_rename_placeholder
+            label: root.i18n.dlg_rename_label
+            placeholderText: root.i18n.dlg_rename_placeholder
         }
     }
 
     // ---- Dialog: Find Earbuds Safety Warning ----
     FormCard.FormCardDialog {
         id: findConfirmDialog
-        title: i18n.find_warn_title
+        title: root.i18n.find_warn_title
         standardButtons: Controls.Dialog.Yes | Controls.Dialog.Cancel
 
         onAccepted: backend.startFindEarbuds()
 
         FormCard.FormTextDelegate {
-            text: i18n.find_warn_heading
-            description: i18n.find_warn_body
+            text: root.i18n.find_warn_heading
+            description: root.i18n.find_warn_body
             leadingPadding: Kirigami.Units.largeSpacing
             leading: Kirigami.Icon {
                 source: "dialog-warning"

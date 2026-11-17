@@ -45,6 +45,7 @@ void DeviceRegistry::load() {
     if (!f.exists() || !f.open(QIODevice::ReadOnly)) {
         m_activeMac.clear();
         m_autoSwitch = true;
+        m_language = QStringLiteral("en");
         m_initialized = false;
         m_devices.clear();
         return;
@@ -90,6 +91,8 @@ void DeviceRegistry::load() {
     m_devices = std::move(list);
     m_activeMac = act;
     m_autoSwitch = root.value(QStringLiteral("auto_switch")).toBool(true);
+    const QString savedLang = root.value(QStringLiteral("language")).toString().trimmed();
+    m_language = savedLang.isEmpty() ? QStringLiteral("en") : savedLang;
     m_initialized = root.value(QStringLiteral("initialized")).toBool(true);
 }
 
@@ -106,6 +109,7 @@ void DeviceRegistry::saveUnlocked() {
     QJsonObject root{
         {QStringLiteral("active_mac"), m_activeMac.isEmpty() ? QJsonValue() : QJsonValue(m_activeMac)},
         {QStringLiteral("auto_switch"), m_autoSwitch},
+        {QStringLiteral("language"), m_language},
         {QStringLiteral("initialized"), m_initialized},
         {QStringLiteral("devices"), arr},
     };
@@ -156,6 +160,18 @@ bool DeviceRegistry::autoSwitch() const {
 void DeviceRegistry::setAutoSwitch(bool enabled) {
     QMutexLocker lock(&m_mutex);
     m_autoSwitch = enabled;
+    saveUnlocked();
+}
+
+QString DeviceRegistry::language() const {
+    QMutexLocker lock(&m_mutex);
+    return m_language;
+}
+
+void DeviceRegistry::setLanguage(const QString& lang) {
+    QMutexLocker lock(&m_mutex);
+    const QString c = lang.trimmed().toLower();
+    m_language = c.isEmpty() ? QStringLiteral("en") : c;
     saveUnlocked();
 }
 

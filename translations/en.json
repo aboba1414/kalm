@@ -1,4 +1,5 @@
 {
+  "lang_name": "English",
   "app_subtitle": "Noise cancellation & earbud manager for vivo / iQOO TWS",
   "window_my_earbuds": "My Earbuds",
   "action_add_earbuds": "Add Earbuds",
@@ -104,6 +105,11 @@
   "find_warn_title": "Warning: Loud Tone",
   "find_warn_heading": "Make sure both earbuds are removed from your ears!",
   "find_warn_body": "Both earbuds will emit a loud sound signal to help locate them nearby.",
+
+  "section_settings": "Application",
+  "lang_title": "Language",
+  "lang_desc": "Interface, tray menu, and CLI language",
+  "lang_auto": "System locale",
 
   "dlg_add_title": "Add Earbuds",
   "dlg_add_hint": "Select paired earbuds from Bluetooth or enter a MAC address manually.",

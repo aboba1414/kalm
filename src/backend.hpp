@@ -14,6 +14,7 @@
 #include <QPointer>
 #include <QSystemTrayIcon>
 #include <QVariantList>
+#include <QVariantMap>
 #include <QWindow>
 #include <optional>
 
@@ -24,6 +25,10 @@ QIcon makeKalmIcon(bool connected, std::optional<NoiseMode> mode);
 class KalmBackend : public QObject {
     Q_OBJECT
 
+    Q_PROPERTY(QVariantMap i18n READ i18n NOTIFY languageChanged)
+    Q_PROPERTY(QVariantList languageModel READ languageModel NOTIFY languageChanged)
+    Q_PROPERTY(int languageIndex READ languageIndex NOTIFY languageChanged)
+
     Q_PROPERTY(bool quitting READ quitting NOTIFY quittingChanged)
     Q_PROPERTY(bool connected READ connected NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
@@ -32,9 +37,9 @@ class KalmBackend : public QObject {
     Q_PROPERTY(QString statusSummary READ statusSummary NOTIFY stateChanged)
     Q_PROPERTY(int noiseModeIndex READ noiseModeIndex NOTIFY stateChanged)
 
-    Q_PROPERTY(QVariantList ancLevelModel READ ancLevelModel CONSTANT)
+    Q_PROPERTY(QVariantList ancLevelModel READ ancLevelModel NOTIFY languageChanged)
     Q_PROPERTY(int ancLevelIndex READ ancLevelIndex NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList transEffectModel READ transEffectModel CONSTANT)
+    Q_PROPERTY(QVariantList transEffectModel READ transEffectModel NOTIFY languageChanged)
     Q_PROPERTY(int transEffectIndex READ transEffectIndex NOTIFY stateChanged)
 
     Q_PROPERTY(QString leftBatteryText READ leftBatteryText NOTIFY stateChanged)
@@ -44,9 +49,9 @@ class KalmBackend : public QObject {
     Q_PROPERTY(QString caseBatteryText READ caseBatteryText NOTIFY stateChanged)
     Q_PROPERTY(QString caseBatterySub READ caseBatterySub NOTIFY stateChanged)
 
-    Q_PROPERTY(QVariantList eqModel READ eqModel CONSTANT)
+    Q_PROPERTY(QVariantList eqModel READ eqModel NOTIFY languageChanged)
     Q_PROPERTY(int eqIndex READ eqIndex NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList cycleModel READ cycleModel CONSTANT)
+    Q_PROPERTY(QVariantList cycleModel READ cycleModel NOTIFY languageChanged)
     Q_PROPERTY(int cycleIndex READ cycleIndex NOTIFY stateChanged)
 
     Q_PROPERTY(bool gameMode READ gameMode NOTIFY stateChanged)
@@ -70,6 +75,10 @@ public:
     void pushDevicesRefreshFromWorker();
     void pushErrorFromWorker(const QString& msg);
     void pushShowFromWorker();
+
+    QVariantMap i18n() const;
+    QVariantList languageModel() const { return m_languageModel; }
+    int languageIndex() const;
 
     bool quitting() const { return m_quitting; }
     bool connected() const { return m_state.connected; }
@@ -110,6 +119,7 @@ public:
 
 public Q_SLOTS:
     void refreshSavedDevicesAsync();
+    void setLanguageByIndex(int index);
     void setNoiseByIndex(int index);
     void setAncLevelByIndex(int index);
     void setTransEffectByIndex(int index);
@@ -133,6 +143,7 @@ public Q_SLOTS:
     void quitApp();
 
 Q_SIGNALS:
+    void languageChanged();
     void stateChanged();
     void devicesChanged();
     void discoveredChanged();
@@ -142,12 +153,14 @@ Q_SIGNALS:
     void windowShowRequested();
 
 private:
+    void rebuildLocalizedModels();
     void runBg(std::function<void()> fn);
     void setBannerMain(const QString& text, int type);
 
     KalmSession& m_session;
     DeviceRegistry& m_registry;
     EarbudState m_state;
+    QVariantList m_languageModel;
     QVariantList m_ancLevelModel;
     QVariantList m_transEffectModel;
     QVariantList m_eqModel;
@@ -171,6 +184,7 @@ public:
 
 private Q_SLOTS:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
+    void retranslateMenu();
     void syncState();
     void syncDevicesMenu();
 
@@ -190,8 +204,11 @@ private:
     QMap<int, QAction*> m_ancLevelActions;
     QMenu* m_devsMenu = nullptr;
     QActionGroup* m_devsGroup = nullptr;
+    QMenu* m_eqMenu = nullptr;
     QMap<int, QAction*> m_eqActions;
     QAction* m_gameAct = nullptr;
+    QAction* m_openAct = nullptr;
+    QAction* m_quitAct = nullptr;
 };
 
 }  // namespace kalm

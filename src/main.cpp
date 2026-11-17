@@ -181,7 +181,7 @@ std::optional<int> parseEqPreset(const QString& raw) {
 void printHelp() {
     QTextStream out(stdout);
     out << "Kalm — " << kalm::trKey("app_subtitle") << "\n\n"
-        << "  kalm [--minimized] [--lang <en|ru>] [-d <MAC|name>]\n"
+        << "  kalm [--minimized] [--lang <en|ru|auto>] [-d <MAC|name>]\n"
         << "  kalm status [--json] [-d <MAC|name>]\n"
         << "  kalm anc [adaptive|mild|standard|deep|plane|metro|bus] [--notify]\n"
         << "  kalm trans [standard|voice] [--notify]\n"
@@ -189,6 +189,7 @@ void printHelp() {
         << "  kalm toggle [--modes anc,trans,off] [--notify]\n"
         << "  kalm eq <standard|vocal|bass|treble|audiobook|master>\n"
         << "  kalm game <on|off>\n"
+        << "  kalm lang <en|ru|auto>\n"
         << "  kalm devices [list|scan|add <MAC> [--alias <name>]|use <target>|rename <target> <name>|remove <target>]\n";
 }
 
@@ -212,9 +213,8 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     app.setQuitOnLastWindowClosed(false);
     app.setWindowIcon(kalm::makeKalmIcon(false, std::nullopt));
 
-    kalm::initI18n(langOverride);
-
     kalm::DeviceRegistry registry;
+    kalm::initI18n(!langOverride.isEmpty() ? langOverride : registry.language());
     registry.ensureInitialImport();
 
     QString overrideMac;
@@ -249,7 +249,6 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     session.start();
 
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("i18n"), kalm::i18nVariantMap());
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
@@ -431,7 +430,8 @@ int main(int argc, char** argv) {
     }
 
     QCoreApplication coreApp(argc, argv);
-    kalm::initI18n(langOverride);
+    kalm::DeviceRegistry reg;
+    kalm::initI18n(!langOverride.isEmpty() ? langOverride : reg.language());
 
     if (wantHelp) {
         printHelp();
@@ -442,11 +442,20 @@ int main(int argc, char** argv) {
     QTextStream err(stderr);
 
     try {
+        if (subcmd == u"lang") {
+            if (positional.size() < 2) {
+                out << reg.language() << "\n";
+                return 0;
+            }
+            reg.setLanguage(positional[1]);
+            kalm::initI18n(reg.language());
+            out << kalm::trKey("lang_title") << ": " << reg.language() << "\n";
+            return 0;
+        }
+
         if (subcmd == u"devices") {
             return handleDevicesSubcmd(positional.mid(1));
         }
-
-        kalm::DeviceRegistry reg;
 
         if (subcmd == u"status") {
             std::optional<QJsonObject> ipc;

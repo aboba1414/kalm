@@ -1,11 +1,13 @@
 [Desktop Entry]
 Type=Application
 Name=Kalm
-GenericName=Управление наушниками
-Comment=Режимы шумоподавления, заряд и управление наушниками vivo / iQOO TWS
+GenericName=Earbud Manager
+GenericName[ru]=Управление наушниками
+Comment=Noise cancellation, battery and settings for vivo / iQOO TWS
+Comment[ru]=Режимы шумоподавления, заряд и управление наушниками vivo / iQOO TWS
 Exec=kalm
 Icon=audio-headset
 Terminal=false
 Categories=Qt;KDE;AudioVideo;Audio;Settings;HardwareSettings;
-Keywords=kalm;vivo;iqoo;tws;anc;bluetooth;наушники;шумоподавление;
+Keywords=kalm;vivo;iqoo;tws;anc;bluetooth;earbuds;наушники;шумоподавление;
 StartupNotify=true

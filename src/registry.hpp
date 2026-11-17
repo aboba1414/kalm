@@ -33,6 +33,8 @@ public:
     QString activeMac() const;
     bool autoSwitch() const;
     void setAutoSwitch(bool enabled);
+    QString language() const;
+    void setLanguage(const QString& lang);
 
     std::optional<SavedEarbud> get(const QString& mac) const;
     std::optional<SavedEarbud> getActive() const;
@@ -53,6 +55,7 @@ private:
     mutable QRecursiveMutex m_mutex;
     QString m_activeMac;
     bool m_autoSwitch = true;
+    QString m_language = QStringLiteral("en");
     bool m_initialized = false;
     QList<SavedEarbud> m_devices;
 };

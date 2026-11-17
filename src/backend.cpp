@@ -102,30 +102,73 @@ KalmBackend::KalmBackend(KalmSession& session, DeviceRegistry& registry, QObject
       m_session(session),
       m_registry(registry),
       m_state(session.snapshot()) {
+    rebuildLocalizedModels();
+    refreshSavedDevicesAsync();
+}
+
+void KalmBackend::rebuildLocalizedModels() {
+    m_languageModel.clear();
+    for (const auto& l : availableLanguages()) {
+        m_languageModel.append(QVariantMap{
+            {QStringLiteral("text"), l.label},
+            {QStringLiteral("value"), l.code},
+        });
+    }
+
+    m_ancLevelModel.clear();
     for (const auto& a : ancLevelPresets()) {
         m_ancLevelModel.append(QVariantMap{
             {QStringLiteral("text"), trKey(a.trKeyName)},
             {QStringLiteral("value"), a.code},
         });
     }
+
+    m_transEffectModel.clear();
     for (const auto& t : transparencyPresets()) {
         m_transEffectModel.append(QVariantMap{
             {QStringLiteral("text"), trKey(t.trKeyName)},
             {QStringLiteral("value"), t.code},
         });
     }
+
+    m_eqModel.clear();
     for (const auto& e : audioEffectPresets()) {
         m_eqModel.append(QVariantMap{
             {QStringLiteral("text"), trKey(e.trKeyName)},
             {QStringLiteral("value"), e.code},
         });
     }
+
+    m_cycleModel.clear();
     for (const auto& c : noiseCyclePresets()) {
         m_cycleModel.append(QVariantMap{
             {QStringLiteral("text"), trKey(c.trKeyName)},
             {QStringLiteral("value"), c.code},
         });
     }
+}
+
+QVariantMap KalmBackend::i18n() const { return i18nVariantMap(); }
+
+int KalmBackend::languageIndex() const {
+    const QString pref = m_registry.language().trimmed().toLower();
+    for (qsizetype i = 0; i < m_languageModel.size(); ++i) {
+        if (m_languageModel[i].toMap().value(QStringLiteral("value")).toString() == pref) {
+            return static_cast<int>(i);
+        }
+    }
+    return 0;
+}
+
+void KalmBackend::setLanguageByIndex(int index) {
+    if (index < 0 || index >= m_languageModel.size()) return;
+    const QString code = m_languageModel[index].toMap().value(QStringLiteral("value")).toString();
+    if (code.isEmpty()) return;
+    m_registry.setLanguage(code);
+    initI18n(code);
+    rebuildLocalizedModels();
+    Q_EMIT languageChanged();
+    Q_EMIT stateChanged();
     refreshSavedDevicesAsync();
 }
 
@@ -505,39 +548,36 @@ KalmTrayController::KalmTrayController(KalmSession& session, KalmBackend& backen
       m_session(session),
       m_backend(backend),
       m_tray(makeKalmIcon(false, std::nullopt), this) {
-    m_tray.setToolTip(QStringLiteral("Kalm — %1").arg(trKey("status_waiting")));
-
     m_headerAct = m_menu.addAction(QStringLiteral("Kalm"));
     m_headerAct->setEnabled(false);
-    m_battAct = m_menu.addAction(QStringLiteral("%1: —").arg(trKey("batt_label")));
+    m_battAct = m_menu.addAction(QStringLiteral("—"));
     m_battAct->setEnabled(false);
     m_menu.addSeparator();
 
     auto* modeGroup = new QActionGroup(&m_menu);
     modeGroup->setExclusive(true);
 
-    m_actAnc = m_menu.addAction(trKey("mode_anc_short"));
+    m_actAnc = m_menu.addAction(QString{});
     m_actAnc->setCheckable(true);
     modeGroup->addAction(m_actAnc);
     connect(m_actAnc, &QAction::triggered, this, [this]() { m_backend.setNoiseByIndex(0); });
 
-    m_actTrans = m_menu.addAction(trKey("mode_trans"));
+    m_actTrans = m_menu.addAction(QString{});
     m_actTrans->setCheckable(true);
     modeGroup->addAction(m_actTrans);
     connect(m_actTrans, &QAction::triggered, this, [this]() { m_backend.setNoiseByIndex(2); });
 
-    m_actOff = m_menu.addAction(trKey("mode_off"));
+    m_actOff = m_menu.addAction(QString{});
     m_actOff->setCheckable(true);
     modeGroup->addAction(m_actOff);
     connect(m_actOff, &QAction::triggered, this, [this]() { m_backend.setNoiseByIndex(1); });
 
-    // ANC Level Submenu
-    m_ancLevelMenu = m_menu.addMenu(trKey("tray_anc_level_menu"));
+    m_ancLevelMenu = m_menu.addMenu(QString{});
     auto* ancGroup = new QActionGroup(m_ancLevelMenu);
     ancGroup->setExclusive(true);
     const auto& ancList = ancLevelPresets();
     for (size_t i = 0; i < ancList.size(); ++i) {
-        QAction* act = m_ancLevelMenu->addAction(trKey(ancList[i].trKeyName));
+        QAction* act = m_ancLevelMenu->addAction(QString{});
         act->setCheckable(true);
         ancGroup->addAction(act);
         const int idx = static_cast<int>(i);
@@ -547,16 +587,16 @@ KalmTrayController::KalmTrayController(KalmSession& session, KalmBackend& backen
 
     m_menu.addSeparator();
 
-    m_devsMenu = m_menu.addMenu(trKey("window_my_earbuds"));
+    m_devsMenu = m_menu.addMenu(QString{});
     m_devsGroup = new QActionGroup(m_devsMenu);
     m_devsGroup->setExclusive(true);
 
-    QMenu* eqMenu = m_menu.addMenu(trKey("tray_eq_menu"));
-    auto* eqGroup = new QActionGroup(eqMenu);
+    m_eqMenu = m_menu.addMenu(QString{});
+    auto* eqGroup = new QActionGroup(m_eqMenu);
     eqGroup->setExclusive(true);
     const auto& presets = audioEffectPresets();
     for (size_t i = 0; i < presets.size(); ++i) {
-        QAction* act = eqMenu->addAction(trKey(presets[i].trKeyName));
+        QAction* act = m_eqMenu->addAction(QString{});
         act->setCheckable(true);
         eqGroup->addAction(act);
         const int idx = static_cast<int>(i);
@@ -564,23 +604,51 @@ KalmTrayController::KalmTrayController(KalmSession& session, KalmBackend& backen
         m_eqActions.insert(presets[i].code, act);
     }
 
-    m_gameAct = m_menu.addAction(trKey("game_title"));
+    m_gameAct = m_menu.addAction(QString{});
     m_gameAct->setCheckable(true);
     connect(m_gameAct, &QAction::triggered, this, [this](bool checked) { m_backend.setGameMode(checked); });
 
     m_menu.addSeparator();
-    QAction* openAct = m_menu.addAction(trKey("action_open_app"));
-    connect(openAct, &QAction::triggered, &m_backend, &KalmBackend::windowShowRequested);
+    m_openAct = m_menu.addAction(QString{});
+    connect(m_openAct, &QAction::triggered, &m_backend, &KalmBackend::windowShowRequested);
 
-    QAction* quitAct = m_menu.addAction(trKey("action_quit"));
-    connect(quitAct, &QAction::triggered, &m_backend, &KalmBackend::quitApp);
+    m_quitAct = m_menu.addAction(QString{});
+    connect(m_quitAct, &QAction::triggered, &m_backend, &KalmBackend::quitApp);
 
     m_tray.setContextMenu(&m_menu);
     connect(&m_tray, &QSystemTrayIcon::activated, this, &KalmTrayController::onActivated);
+    connect(&m_backend, &KalmBackend::languageChanged, this, &KalmTrayController::retranslateMenu);
     connect(&m_backend, &KalmBackend::stateChanged, this, &KalmTrayController::syncState);
     connect(&m_backend, &KalmBackend::devicesChanged, this, &KalmTrayController::syncDevicesMenu);
 
+    retranslateMenu();
     m_tray.show();
+}
+
+void KalmTrayController::retranslateMenu() {
+    m_actAnc->setText(trKey("mode_anc_short"));
+    m_actTrans->setText(trKey("mode_trans"));
+    m_actOff->setText(trKey("mode_off"));
+
+    m_ancLevelMenu->setTitle(trKey("tray_anc_level_menu"));
+    for (const auto& a : ancLevelPresets()) {
+        if (m_ancLevelActions.contains(a.code)) {
+            m_ancLevelActions.value(a.code)->setText(trKey(a.trKeyName));
+        }
+    }
+
+    m_devsMenu->setTitle(trKey("window_my_earbuds"));
+    m_eqMenu->setTitle(trKey("tray_eq_menu"));
+    for (const auto& p : audioEffectPresets()) {
+        if (m_eqActions.contains(p.code)) {
+            m_eqActions.value(p.code)->setText(trKey(p.trKeyName));
+        }
+    }
+
+    m_gameAct->setText(trKey("game_title"));
+    m_openAct->setText(trKey("action_open_app"));
+    m_quitAct->setText(trKey("action_quit"));
+
     syncState();
     syncDevicesMenu();
 }

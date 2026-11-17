@@ -65,8 +65,8 @@ int main() {
     assert(st.noiseEffect == 2);
     assert(st.transparencyEffect == 2);
 
-    // 3. i18n tests (English + Russian + fallback)
-    initI18n(QStringLiteral("en"));
+    // 3. i18n tests (Default English + Russian + System locale)
+    initI18n();
     assert(currentLanguage() == u"en");
     assert(ancLevelLabel(2) == u"Deep");
     assert(transparencyLabel(2) == u"Vocal enhancement");
@@ -81,6 +81,9 @@ int main() {
     assert(tmp.isValid());
     const QString cfgPath = tmp.path() + QStringLiteral("/devices.json");
     DeviceRegistry reg(cfgPath);
+    assert(reg.language() == u"en");
+    reg.setLanguage(QStringLiteral("ru"));
+    assert(reg.language() == u"ru");
     const auto d1 = reg.add(QStringLiteral("1c:ba:b8:0f:5a:0f"), QStringLiteral("vivo TWS 5 Hi-Fi"), {}, true);
     const auto d2 = reg.add(QStringLiteral("AA-BB-CC-11-22-33"), QStringLiteral("vivo TWS 3e"), QStringLiteral("Спорт"), false);
     assert(d1.mac == u"1C:BA:B8:0F:5A:0F");
