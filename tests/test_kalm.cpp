@@ -3,40 +3,51 @@
 #include "probe.hpp"
 #include "protocol.hpp"
 #include "registry.hpp"
+#include "session.hpp"
+#include "transport.hpp"
 
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
-#include <cassert>
+#include <cstdlib>
 #include <iostream>
+#include <malloc.h>
+
+#define KALM_CHECK(cond)                                                                      \
+    do {                                                                                      \
+        if (!(cond)) {                                                                        \
+            std::cerr << "CHECK FAILED at " << __FILE__ << ":" << __LINE__ << ": " #cond "\n"; \
+            std::abort();                                                                     \
+        }                                                                                     \
+    } while (0)
 
 int main() {
     using namespace kalm;
 
     // 1. Protocol & ANC degrees encoding + models.json lookup
-    assert(maskMacForReport(QStringLiteral("1c:ba:b8:0f:5a:0f")) == u"1C:BA:B8:XX:XX:XX");
+    KALM_CHECK(maskMacForReport(QStringLiteral("1c:ba:b8:0f:5a:0f")) == u"1C:BA:B8:XX:XX:XX");
     const WireProfile air3 = selectProfile(QStringLiteral("vivo TWS Air3 Pro"));
-    assert(air3.gaiaVersion == 3);
-    assert(air3.noiseSetSuffix.toHex() == "0400");
+    KALM_CHECK(air3.gaiaVersion == 3);
+    KALM_CHECK(air3.noiseSetSuffix.toHex() == "0400");
 
     const WireProfile v4 = selectProfile(QStringLiteral("vivo TWS 5 Hi-Fi"));
-    assert(buildHandshake().toHex() == "ff040000000a0300");
-    assert(buildSetNoiseMode(NoiseMode::Anc, v4).toHex() == "ff040003001b0130000301");
-    assert(buildSetNoiseMode(NoiseMode::Off, v4).toHex() == "ff040003001b0130010301");
-    assert(buildSetNoiseMode(NoiseMode::Transparency, v4).toHex() == "ff040003001b0130020301");
+    KALM_CHECK(buildHandshake().toHex() == "ff040000000a0300");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Anc, v4).toHex() == "ff040003001b0130000301");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Off, v4).toHex() == "ff040003001b0130010301");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Transparency, v4).toHex() == "ff040003001b0130020301");
 
     // Explicit ANC degrees & Transparency effects extracted from vivo APK
-    assert(buildSetNoiseMode(NoiseMode::Anc, v4, 1, 1).toHex() == "ff040003001b0130000101");  // Mild
-    assert(buildSetNoiseMode(NoiseMode::Anc, v4, 0, 1).toHex() == "ff040003001b0130000001");  // Standard
-    assert(buildSetNoiseMode(NoiseMode::Anc, v4, 2, 1).toHex() == "ff040003001b0130000201");  // Deep
-    assert(buildSetNoiseMode(NoiseMode::Anc, v4, 5, 2).toHex() == "ff040003001b0130000502");  // Plane + Voice
-    assert(buildSetNoiseMode(NoiseMode::Transparency, v4, 2, 2).toHex() == "ff040003001b0130020202");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Anc, v4, 1, 1).toHex() == "ff040003001b0130000101");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Anc, v4, 0, 1).toHex() == "ff040003001b0130000001");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Anc, v4, 2, 1).toHex() == "ff040003001b0130000201");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Anc, v4, 5, 2).toHex() == "ff040003001b0130000502");
+    KALM_CHECK(buildSetNoiseMode(NoiseMode::Transparency, v4, 2, 2).toHex() == "ff040003001b0130020202");
 
-    assert(parseAncLevelStr(QStringLiteral("mild")) == 1);
-    assert(parseAncLevelStr(QStringLiteral("deep")) == 2);
-    assert(parseAncLevelStr(QStringLiteral("adaptive")) == 3);
-    assert(parseAncLevelStr(QStringLiteral("metro")) == 6);
-    assert(parseTransparencyStr(QStringLiteral("voice")) == 2);
+    KALM_CHECK(parseAncLevelStr(QStringLiteral("mild")) == 1);
+    KALM_CHECK(parseAncLevelStr(QStringLiteral("deep")) == 2);
+    KALM_CHECK(parseAncLevelStr(QStringLiteral("adaptive")) == 3);
+    KALM_CHECK(parseAncLevelStr(QStringLiteral("metro")) == 6);
+    KALM_CHECK(parseTransparencyStr(QStringLiteral("voice")) == 2);
 
     // 2. Live stream decoding
     const QByteArray rawStream = QByteArray::fromHex(
@@ -58,43 +69,110 @@ int main() {
     for (qsizetype i = 0; i < rawStream.size(); i += 17) {
         frames.append(dec.feed(rawStream.mid(i, 17)));
     }
-    assert(frames.size() == 4);
+    KALM_CHECK(frames.size() == 4);
 
     EarbudState st;
     st.connected = true;
     for (const auto& f : frames) applyFrameToState(f, st);
 
-    assert(st.leftBattery.level == 57);
-    assert(st.rightBattery.level == 91);
-    assert(st.firmware == u"2.10.55");
-    assert(st.noiseMode == NoiseMode::Anc);
-    assert(st.noiseEffect == 2);
-    assert(st.transparencyEffect == 2);
+    KALM_CHECK(st.leftBattery.level == 57);
+    KALM_CHECK(st.rightBattery.level == 91);
+    KALM_CHECK(st.firmware == u"2.10.55");
+    KALM_CHECK(st.noiseMode == NoiseMode::Anc);
+    KALM_CHECK(st.noiseEffect == 2);
+    KALM_CHECK(st.transparencyEffect == 2);
 
-    // 3. i18n tests (Default English + Russian + System locale)
+    // 3. i18n tests (Default English + Russian)
     initI18n();
-    assert(currentLanguage() == u"en");
-    assert(ancLevelLabel(2) == u"Deep");
-    assert(transparencyLabel(2) == u"Vocal enhancement");
+    KALM_CHECK(currentLanguage() == u"en");
+    KALM_CHECK(ancLevelLabel(2) == u"Deep");
+    KALM_CHECK(transparencyLabel(2) == u"Vocal enhancement");
 
     initI18n(QStringLiteral("ru"));
-    assert(currentLanguage() == u"ru");
-    assert(ancLevelLabel(2) == u"Сильное");
-    assert(transparencyLabel(2) == u"Усиление голоса");
+    KALM_CHECK(currentLanguage() == u"ru");
+    KALM_CHECK(ancLevelLabel(2) == u"Сильное");
+    KALM_CHECK(transparencyLabel(2) == u"Усиление голоса");
 
     // 4. Registry tests
     QTemporaryDir tmp;
-    assert(tmp.isValid());
+    KALM_CHECK(tmp.isValid());
     const QString cfgPath = tmp.path() + QStringLiteral("/devices.json");
     DeviceRegistry reg(cfgPath);
-    assert(reg.language() == u"en");
+    KALM_CHECK(reg.language() == u"en");
     reg.setLanguage(QStringLiteral("ru"));
-    assert(reg.language() == u"ru");
+    KALM_CHECK(reg.language() == u"ru");
+
     const auto d1 = reg.add(QStringLiteral("1c:ba:b8:0f:5a:0f"), QStringLiteral("vivo TWS 5 Hi-Fi"), {}, true);
     const auto d2 = reg.add(QStringLiteral("AA-BB-CC-11-22-33"), QStringLiteral("vivo TWS 3e"), QStringLiteral("Спорт"), false);
-    assert(d1.mac == u"1C:BA:B8:0F:5A:0F");
-    assert(d2.mac == u"AA:BB:CC:11:22:33");
-    assert(reg.activeMac() == u"1C:BA:B8:0F:5A:0F");
+    KALM_CHECK(d1.mac == u"1C:BA:B8:0F:5A:0F");
+    KALM_CHECK(d2.mac == u"AA:BB:CC:11:22:33");
+    KALM_CHECK(reg.activeMac() == u"1C:BA:B8:0F:5A:0F");
+
+    // 5. Heap & File-Descriptor Leak Stress Test (2,000 decode/JSON cycles + 100 IPC roundtrips)
+    auto countOpenFds = []() -> qsizetype {
+        return QDir(QStringLiteral("/proc/self/fd")).entryList(QDir::NoDotAndDotDot).size();
+    };
+
+    qputenv("XDG_RUNTIME_DIR", tmp.path().toUtf8());
+    KalmSession testSession(reg);
+    IpcServer srv(testSession);
+    KALM_CHECK(srv.start());
+
+    // Warm-up 100 cycles so Qt caches & glibc per-thread tcache bins reach steady state
+    for (int w = 0; w < 100; ++w) {
+        initI18n((w % 2 == 0) ? QStringLiteral("en") : QStringLiteral("ru"));
+        FrameDecoder warmDec;
+        EarbudState warmSt;
+        for (const auto& f : warmDec.feed(rawStream)) applyFrameToState(f, warmSt);
+        (void)warmSt.toJson();
+        (void)ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("ping")}}, 1000);
+        (void)ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("status")}}, 1000);
+    }
+
+    const qsizetype fdsBefore = countOpenFds();
+    const size_t h0 = mallinfo2().uordblks;
+
+    for (int iter = 0; iter < 10000; ++iter) {
+        FrameDecoder loopDec;
+        EarbudState loopSt;
+        loopSt.connected = true;
+        for (const auto& f : loopDec.feed(rawStream)) {
+            applyFrameToState(f, loopSt);
+        }
+        const auto json = loopSt.toJson();
+        KALM_CHECK(json.value(QStringLiteral("connected")).toBool());
+    }
+    const size_t h1 = mallinfo2().uordblks;
+
+    for (int iter = 0; iter < 1000; ++iter) {
+        initI18n((iter % 2 == 0) ? QStringLiteral("en") : QStringLiteral("ru"));
+    }
+    const size_t h2 = mallinfo2().uordblks;
+
+    for (int i = 0; i < 500; ++i) {
+        const auto pong = ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("ping")}}, 1000);
+        KALM_CHECK(pong.has_value() && pong->value(QStringLiteral("ok")).toBool());
+        const auto stResp = ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("status")}}, 1000);
+        KALM_CHECK(stResp.has_value() && stResp->value(QStringLiteral("ok")).toBool());
+    }
+    const size_t h3 = mallinfo2().uordblks;
+    const qsizetype fdsDuring = countOpenFds();
+
+    srv.stop();
+    const qsizetype fdsAfterStop = countOpenFds();
+
+    const ssize_t dDecode = static_cast<ssize_t>(h1) - static_cast<ssize_t>(h0);
+    const ssize_t dI18n = static_cast<ssize_t>(h2) - static_cast<ssize_t>(h1);
+    const ssize_t dIpc = static_cast<ssize_t>(h3) - static_cast<ssize_t>(h2);
+
+    std::cout << "Leak check: FDs=" << fdsBefore << "->" << fdsDuring << " (after stop=" << fdsAfterStop
+              << "), 10000 decode=" << dDecode << "B, 1000 i18n=" << dI18n << "B, 1000 IPC=" << dIpc << "B\n";
+
+    KALM_CHECK(fdsDuring == fdsBefore);
+    KALM_CHECK(fdsAfterStop < fdsBefore);
+    KALM_CHECK(dDecode <= 16384);
+    KALM_CHECK(dI18n <= 16384);
+    KALM_CHECK(dIpc <= 16384);
 
     std::cout << "All C++ tests passed.\n";
     return 0;

@@ -120,11 +120,6 @@ void DeviceRegistry::saveUnlocked() {
     }
 }
 
-void DeviceRegistry::save() {
-    QMutexLocker lock(&m_mutex);
-    saveUnlocked();
-}
-
 void DeviceRegistry::ensureInitialImport() {
     QMutexLocker lock(&m_mutex);
     if (m_initialized) return;

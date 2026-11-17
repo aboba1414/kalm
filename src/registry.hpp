@@ -26,7 +26,6 @@ public:
     explicit DeviceRegistry(const QString& customPath = {});
 
     void load();
-    void save();
     void ensureInitialImport();
 
     QList<SavedEarbud> devices() const;

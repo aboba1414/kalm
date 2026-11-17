@@ -17,7 +17,6 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QVariantMap>
-#include <thread>
 
 namespace kalm {
 
@@ -103,8 +102,14 @@ KalmBackend::KalmBackend(KalmSession& session, DeviceRegistry& registry, QObject
       m_session(session),
       m_registry(registry),
       m_state(session.snapshot()) {
+    m_pool.setMaxThreadCount(3);
     rebuildLocalizedModels();
     refreshSavedDevicesAsync();
+}
+
+KalmBackend::~KalmBackend() {
+    m_pool.clear();
+    m_pool.waitForDone();
 }
 
 void KalmBackend::rebuildLocalizedModels() {
@@ -170,7 +175,7 @@ void KalmBackend::setLanguageByIndex(int index) {
     rebuildLocalizedModels();
     Q_EMIT languageChanged();
     Q_EMIT stateChanged();
-    refreshSavedDevicesAsync();
+    Q_EMIT devicesChanged();
 }
 
 void KalmBackend::bindWindow(QWindow* win) {
@@ -311,18 +316,18 @@ QVariantList KalmBackend::multipointDevices() const {
 }
 
 void KalmBackend::runBg(std::function<void()> fn) {
-    std::thread([this, fn = std::move(fn)]() {
+    m_pool.start([this, fn = std::move(fn)]() {
         try {
             fn();
         } catch (const std::exception& ex) {
             const QString err = QString::fromUtf8(ex.what());
             QMetaObject::invokeMethod(this, [this, err]() { setBannerMain(err, 3); }, Qt::QueuedConnection);
         }
-    }).detach();
+    });
 }
 
 void KalmBackend::refreshSavedDevicesAsync() {
-    std::thread([this]() {
+    m_pool.start([this]() {
         QMap<QString, BluezDevice> bmap;
         for (const auto& b : listBluezDevices(false, false)) {
             bmap.insert(b.mac, b);
@@ -346,11 +351,12 @@ void KalmBackend::refreshSavedDevicesAsync() {
         QMetaObject::invokeMethod(
             this,
             [this, items]() {
+                if (m_savedList == items) return;
                 m_savedList = items;
                 Q_EMIT devicesChanged();
             },
             Qt::QueuedConnection);
-    }).detach();
+    });
 }
 
 void KalmBackend::setNoiseByIndex(int index) {
@@ -359,6 +365,10 @@ void KalmBackend::setNoiseByIndex(int index) {
     m_state.noiseMode = mode;
     Q_EMIT stateChanged();
     runBg([this, mode]() { m_session.setNoiseMode(mode); });
+}
+
+void KalmBackend::toggleNoiseAsync() {
+    runBg([this]() { m_session.toggleNoiseMode(); });
 }
 
 void KalmBackend::setAncLevelByIndex(int index) {
@@ -429,7 +439,7 @@ void KalmBackend::refreshNow() {
 }
 
 void KalmBackend::scanBluetoothDevices() {
-    std::thread([this]() {
+    m_pool.start([this]() {
         const auto devs = listBluezDevices(false, true);
         QSet<QString> savedMacs;
         for (const auto& s : m_registry.devices()) savedMacs.insert(s.mac);
@@ -456,7 +466,7 @@ void KalmBackend::scanBluetoothDevices() {
                 Q_EMIT discoveredChanged();
             },
             Qt::QueuedConnection);
-    }).detach();
+    });
 }
 
 bool KalmBackend::addSavedDevice(const QString& mac, const QString& name, const QString& alias) {
@@ -492,7 +502,7 @@ void KalmBackend::selectSavedDevice(const QString& mac) {
 
 void KalmBackend::connectBluetoothDevice(const QString& mac) {
     setBannerMain(trKey("msg_connecting_bt").arg(mac), 0);
-    std::thread([this, mac]() {
+    m_pool.start([this, mac]() {
         const bool ok = connectBluezDevice(mac);
         if (ok) {
             m_session.forceReconnect();
@@ -507,7 +517,7 @@ void KalmBackend::connectBluetoothDevice(const QString& mac) {
                 Qt::QueuedConnection);
         }
         refreshSavedDevicesAsync();
-    }).detach();
+    });
 }
 
 void KalmBackend::setAutoSwitch(bool enabled) {
@@ -535,7 +545,7 @@ void KalmBackend::runDiagnosticProbe() {
     m_probeReport = trKey("dlg_probe_running");
     Q_EMIT probeChanged();
 
-    std::thread([this]() {
+    m_pool.start([this]() {
         QString rep;
         try {
             rep = m_session.runProbe();
@@ -550,7 +560,7 @@ void KalmBackend::runDiagnosticProbe() {
                 Q_EMIT probeChanged();
             },
             Qt::QueuedConnection);
-    }).detach();
+    });
 }
 
 void KalmBackend::copyReportToClipboard() {
@@ -694,15 +704,15 @@ void KalmTrayController::onActivated(QSystemTrayIcon::ActivationReason reason) {
             Q_EMIT m_backend.windowShowRequested();
         }
     } else if (reason == QSystemTrayIcon::MiddleClick) {
-        std::thread([this]() { m_session.toggleNoiseMode(); }).detach();
+        m_backend.toggleNoiseAsync();
     }
 }
 
 void KalmTrayController::syncDevicesMenu() {
-    m_devsMenu->clear();
     for (QAction* a : m_devsGroup->actions()) {
         m_devsGroup->removeAction(a);
     }
+    m_devsMenu->clear();
 
     const QVariantList items = m_backend.savedDevices();
     if (items.isEmpty()) {

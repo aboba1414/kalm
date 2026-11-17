@@ -5,33 +5,15 @@
 #include "transport.hpp"
 
 #include <QElapsedTimer>
-#include <QMap>
 #include <QTextStream>
 
+#include <algorithm>
 #include <poll.h>
 #include <sys/socket.h>
-#include <unistd.h>
 
 namespace kalm {
 
 namespace {
-
-#ifndef AF_BLUETOOTH
-#define AF_BLUETOOTH 31
-#endif
-#ifndef BTPROTO_RFCOMM
-#define BTPROTO_RFCOMM 3
-#endif
-
-struct bdaddr_k {
-    uint8_t b[6];
-} __attribute__((packed));
-
-struct sockaddr_rc_k {
-    sa_family_t rc_family;
-    bdaddr_k rc_bdaddr;
-    uint8_t rc_channel;
-};
 
 QString hexSpaced(const QByteArray& bytes) {
     if (bytes.isEmpty()) return QStringLiteral("(empty)");
@@ -180,14 +162,7 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
         return report;
     }
 
-    int peerChannel = -1;
-    {
-        sockaddr_rc_k peer{};
-        socklen_t len = sizeof(peer);
-        if (::getpeername(conn.fd, reinterpret_cast<sockaddr*>(&peer), &len) == 0) {
-            peerChannel = static_cast<int>(peer.rc_channel);
-        }
-    }
+    const int peerChannel = getRfcommPeerChannel(conn.fd.get());
     out << "- **Connected RFCOMM Channel:** `" << peerChannel << "`\n";
 
     FrameDecoder dec;
@@ -214,9 +189,9 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
 
     // Send notification registration chain
     for (const QByteArray& pkt : buildRegisterNotifications()) {
-        sendAll(conn.fd, pkt);
+        sendAll(conn.fd.get(), pkt);
     }
-    recordTelemetryFw(drainFrames(conn.fd, dec, 350));
+    recordTelemetryFw(drainFrames(conn.fd.get(), dec, 350));
 
     struct ProbeSpec {
         const char* label;
@@ -248,8 +223,8 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
 
     out << "- **Command Probes:**\n";
     for (const auto& sp : specs) {
-        sendAll(conn.fd, encodeFrame(sp.ver, kVivoVendor, sp.cmd, sp.payload));
-        const auto got = drainFrames(conn.fd, dec, 220);
+        sendAll(conn.fd.get(), encodeFrame(sp.ver, kVivoVendor, sp.cmd, sp.payload));
+        const auto got = drainFrames(conn.fd.get(), dec, 220);
         recordTelemetryFw(got);
         QString matchedStr;
         for (const Frame& f : got) {
@@ -275,7 +250,7 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
         const qint64 totalMs = static_cast<qint64>(listenSeconds) * 1000;
         int capturedCount = 0;
         while (listenTimer.elapsed() < totalMs) {
-            const auto got = drainFrames(conn.fd, dec, 300);
+            const auto got = drainFrames(conn.fd.get(), dec, 300);
             recordTelemetryFw(got);
             for (const Frame& f : got) {
                 if (f.vendor == kVivoVendor && f.command == kCmdReportTelemetry) continue;
@@ -290,7 +265,6 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
         }
     }
 
-    ::close(conn.fd);
     return report;
 }
 

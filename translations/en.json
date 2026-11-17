@@ -35,7 +35,6 @@
   "status_online_short": "online",
   "status_no_device_selected": "No earbuds selected",
   "status_add_or_select": "Add or select earbuds",
-  "status_waiting": "Waiting for connection",
 
   "batt_left": "Left",
   "batt_left_full": "Left earbud",
@@ -114,10 +113,9 @@
   "find_warn_heading": "Make sure both earbuds are removed from your ears!",
   "find_warn_body": "Both earbuds will emit a loud sound signal to help locate them nearby.",
 
-  "section_settings": "Application",
   "lang_title": "Language",
-  "lang_desc": "Interface, tray menu, and CLI language",
   "lang_auto": "System locale",
+  "err_prefix": "Error",
 
   "dlg_add_title": "Add Earbuds",
   "dlg_add_hint": "Select paired earbuds from Bluetooth or enter a MAC address manually.",

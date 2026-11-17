@@ -106,42 +106,36 @@ std::optional<RfcommConnection> tryConnectAndHandshake(const QString& mac, int c
     bdaddr_k bd{};
     if (!parseMacToBdaddr(mac, bd)) return std::nullopt;
 
-    const int fd = ::socket(AF_BLUETOOTH, SOCK_STREAM | SOCK_CLOEXEC, BTPROTO_RFCOMM);
-    if (fd < 0) return std::nullopt;
+    UniqueFd fd(::socket(AF_BLUETOOTH, SOCK_STREAM | SOCK_CLOEXEC, BTPROTO_RFCOMM));
+    if (!fd) return std::nullopt;
 
-    // Non-blocking connect with poll timeout
-    const int origFlags = ::fcntl(fd, F_GETFL, 0);
-    ::fcntl(fd, F_SETFL, origFlags | O_NONBLOCK);
+    const int origFlags = ::fcntl(fd.get(), F_GETFL, 0);
+    ::fcntl(fd.get(), F_SETFL, origFlags | O_NONBLOCK);
 
     sockaddr_rc_k addr{};
     addr.rc_family = AF_BLUETOOTH;
     addr.rc_bdaddr = bd;
     addr.rc_channel = static_cast<uint8_t>(channel);
 
-    int rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+    int rc = ::connect(fd.get(), reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
     if (rc < 0 && errno != EINPROGRESS && errno != EAGAIN) {
-        ::close(fd);
         return std::nullopt;
     }
     if (rc < 0) {
-        pollfd pfd{fd, POLLOUT, 0};
+        pollfd pfd{fd.get(), POLLOUT, 0};
         if (::poll(&pfd, 1, timeoutMs) <= 0 || !(pfd.revents & POLLOUT)) {
-            ::close(fd);
             return std::nullopt;
         }
         int soErr = 0;
         socklen_t len = sizeof(soErr);
-        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len) < 0 || soErr != 0) {
-            ::close(fd);
+        if (::getsockopt(fd.get(), SOL_SOCKET, SO_ERROR, &soErr, &len) < 0 || soErr != 0) {
             return std::nullopt;
         }
     }
 
-    // Restore blocking mode for clean socket usage
-    ::fcntl(fd, F_SETFL, origFlags & ~O_NONBLOCK);
+    ::fcntl(fd.get(), F_SETFL, origFlags & ~O_NONBLOCK);
 
-    if (!sendAll(fd, buildHandshake())) {
-        ::close(fd);
+    if (!sendAll(fd.get(), buildHandshake())) {
         return std::nullopt;
     }
 
@@ -152,23 +146,22 @@ std::optional<RfcommConnection> tryConnectAndHandshake(const QString& mac, int c
     char buf[1024];
     while (timer.elapsed() < 1500) {
         const int rem = std::max(50, static_cast<int>(1500 - timer.elapsed()));
-        pollfd pfd{fd, POLLIN, 0};
+        pollfd pfd{fd.get(), POLLIN, 0};
         const int pr = ::poll(&pfd, 1, rem);
         if (pr <= 0) break;
         if (pfd.revents & (POLLERR | POLLHUP)) break;
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        const ssize_t n = ::recv(fd.get(), buf, sizeof(buf), 0);
         if (n <= 0) break;
         const QByteArray chunk(buf, n);
         leftover.append(chunk);
         const auto frames = decoder.feed(chunk);
         for (const auto& f : frames) {
             if (f.vendor == kGaiaVendor && f.command == kCmdHandshakeResp) {
-                return RfcommConnection{fd, leftover};
+                return RfcommConnection{std::move(fd), leftover};
             }
         }
     }
 
-    ::close(fd);
     return std::nullopt;
 }
 
@@ -184,11 +177,7 @@ public Q_SLOTS:
     void RequestDisconnection(const QDBusObjectPath&) {}
     void NewConnection(const QDBusObjectPath&, const QDBusUnixFileDescriptor& fd, const QVariantMap&) {
         if (fd.isValid()) {
-            sockaddr_rc_k peer{};
-            socklen_t len = sizeof(peer);
-            if (::getpeername(fd.fileDescriptor(), reinterpret_cast<sockaddr*>(&peer), &len) == 0) {
-                discoveredChannel = static_cast<int>(peer.rc_channel);
-            }
+            discoveredChannel = getRfcommPeerChannel(fd.fileDescriptor());
         }
         if (loop) loop->quit();
     }
@@ -377,6 +366,16 @@ bool connectBluezDevice(const QString& mac) {
     return reply.type() == QDBusMessage::ReplyMessage;
 }
 
+int getRfcommPeerChannel(int fd) noexcept {
+    if (fd < 0) return -1;
+    sockaddr_rc_k peer{};
+    socklen_t len = sizeof(peer);
+    if (::getpeername(fd, reinterpret_cast<sockaddr*>(&peer), &len) == 0) {
+        return static_cast<int>(peer.rc_channel);
+    }
+    return -1;
+}
+
 bool sendAll(int fd, const QByteArray& data) {
     qsizetype sent = 0;
     while (sent < data.size()) {
@@ -406,7 +405,7 @@ RfcommConnection openGaiaRfcomm(const QString& mac, const QString& devPath,
     for (int i = 0; i < primaryCount; ++i) {
         if (auto res = tryConnectAndHandshake(normMac, candidates[i], timeoutMs)) {
             saveCachedChannel(normMac, candidates[i]);
-            return *res;
+            return std::move(*res);
         }
     }
 
@@ -414,7 +413,7 @@ RfcommConnection openGaiaRfcomm(const QString& mac, const QString& devPath,
     if (sdpCh) {
         if (auto res = tryConnectAndHandshake(normMac, *sdpCh, timeoutMs)) {
             saveCachedChannel(normMac, *sdpCh);
-            return *res;
+            return std::move(*res);
         }
     }
 
@@ -422,7 +421,7 @@ RfcommConnection openGaiaRfcomm(const QString& mac, const QString& devPath,
         if (sdpCh && candidates[i] == *sdpCh) continue;
         if (auto res = tryConnectAndHandshake(normMac, candidates[i], 1500)) {
             saveCachedChannel(normMac, candidates[i]);
-            return *res;
+            return std::move(*res);
         }
     }
 

@@ -44,20 +44,18 @@ std::optional<QJsonObject> ipcRequest(const QJsonObject& payload, int timeoutMs)
     if (static_cast<size_t>(pathUtf8.size()) >= sizeof(addr.sun_path)) return std::nullopt;
     std::memcpy(addr.sun_path, pathUtf8.constData(), static_cast<size_t>(pathUtf8.size()));
 
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0) return std::nullopt;
+    UniqueFd fd(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    if (!fd) return std::nullopt;
 
-    if (::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-        ::close(fd);
+    if (::connect(fd.get(), reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
         return std::nullopt;
     }
 
     const QByteArray reqBytes = QJsonDocument(payload).toJson(QJsonDocument::Compact);
-    if (!sendAll(fd, reqBytes)) {
-        ::close(fd);
+    if (!sendAll(fd.get(), reqBytes)) {
         return std::nullopt;
     }
-    ::shutdown(fd, SHUT_WR);
+    ::shutdown(fd.get(), SHUT_WR);
 
     QByteArray respBytes;
     QElapsedTimer timer;
@@ -65,14 +63,13 @@ std::optional<QJsonObject> ipcRequest(const QJsonObject& payload, int timeoutMs)
     char buf[4096];
     while (timer.elapsed() < timeoutMs) {
         const int rem = std::max(50, static_cast<int>(timeoutMs - timer.elapsed()));
-        pollfd pfd{fd, POLLIN, 0};
+        pollfd pfd{fd.get(), POLLIN, 0};
         const int pr = ::poll(&pfd, 1, rem);
         if (pr <= 0) break;
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        const ssize_t n = ::recv(fd.get(), buf, sizeof(buf), 0);
         if (n <= 0) break;
         respBytes.append(buf, n);
     }
-    ::close(fd);
 
     if (respBytes.isEmpty()) return std::nullopt;
     QJsonParseError err{};
@@ -532,9 +529,10 @@ void KalmSession::runLoop() {
         }
 
         const WireProfile profile = selectProfile(chosenBluez->name);
+        const int rawConnFd = conn.fd.release();
         {
             QMutexLocker lock(&m_lock);
-            m_sockFd = conn.fd;
+            m_sockFd = rawConnFd;
             m_profile = profile;
             m_state.connected = true;
             m_state.deviceName = chosen->displayName();
@@ -562,9 +560,9 @@ void KalmSession::runLoop() {
                 QMutexLocker lock(&m_lock);
                 curFd = m_sockFd;
             }
-            if (curFd != conn.fd) break;
+            if (curFd != rawConnFd) break;
 
-            pollfd pfd{conn.fd, POLLIN, 0};
+            pollfd pfd{rawConnFd, POLLIN, 0};
             const int pr = ::poll(&pfd, 1, 1000);
             if (pr < 0) {
                 if (errno == EINTR) continue;
@@ -573,7 +571,7 @@ void KalmSession::runLoop() {
             if (pr > 0) {
                 if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
                 if (pfd.revents & POLLIN) {
-                    const ssize_t n = ::recv(conn.fd, buf, sizeof(buf), 0);
+                    const ssize_t n = ::recv(rawConnFd, buf, sizeof(buf), 0);
                     if (n <= 0) break;
                     const auto frames = decoder.feed(QByteArray(buf, n));
                     if (!frames.isEmpty()) handleFrames(frames);
@@ -658,19 +656,17 @@ bool IpcServer::start() {
     if (static_cast<size_t>(pathUtf8.size()) >= sizeof(addr.sun_path)) return false;
     std::memcpy(addr.sun_path, pathUtf8.constData(), static_cast<size_t>(pathUtf8.size()));
 
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0) return false;
-    if (::bind(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-        ::close(fd);
+    UniqueFd fd(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    if (!fd) return false;
+    if (::bind(fd.get(), reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
         return false;
     }
     ::chmod(pathUtf8.constData(), 0600);
-    if (::listen(fd, 8) < 0) {
-        ::close(fd);
+    if (::listen(fd.get(), 8) < 0) {
         return false;
     }
 
-    m_serverFd = fd;
+    m_serverFd = fd.release();
     m_stop.store(false);
     m_thread = std::thread(&IpcServer::acceptLoop, this);
     return true;
@@ -680,11 +676,13 @@ void IpcServer::stop() {
     m_stop.store(true);
     if (m_serverFd >= 0) {
         ::shutdown(m_serverFd, SHUT_RDWR);
-        ::close(m_serverFd);
-        m_serverFd = -1;
     }
     if (m_thread.joinable()) {
         m_thread.join();
+    }
+    if (m_serverFd >= 0) {
+        ::close(m_serverFd);
+        m_serverFd = -1;
     }
     QFile::remove(m_path);
 }
@@ -692,23 +690,24 @@ void IpcServer::stop() {
 void IpcServer::acceptLoop() {
     while (!m_stop.load() && m_serverFd >= 0) {
         pollfd pfd{m_serverFd, POLLIN, 0};
-        const int pr = ::poll(&pfd, 1, 500);
+        const int pr = ::poll(&pfd, 1, 400);
         if (pr <= 0) continue;
         const int clientFd = ::accept4(m_serverFd, nullptr, nullptr, SOCK_CLOEXEC);
         if (clientFd < 0) {
             if (errno == EINTR) continue;
             break;
         }
-        std::thread(&IpcServer::handleClient, this, clientFd).detach();
+        handleClient(clientFd);
     }
 }
 
-void IpcServer::handleClient(int clientFd) {
+void IpcServer::handleClient(int rawClientFd) {
+    UniqueFd clientFd(rawClientFd);
     QByteArray raw;
     char buf[4096];
-    pollfd pfd{clientFd, POLLIN, 0};
+    pollfd pfd{clientFd.get(), POLLIN, 0};
     if (::poll(&pfd, 1, 2000) > 0 && (pfd.revents & POLLIN)) {
-        const ssize_t n = ::recv(clientFd, buf, sizeof(buf), 0);
+        const ssize_t n = ::recv(clientFd.get(), buf, sizeof(buf), 0);
         if (n > 0) raw.append(buf, n);
     }
 
@@ -725,8 +724,7 @@ void IpcServer::handleClient(int clientFd) {
         }
     }
 
-    sendAll(clientFd, QJsonDocument(resp).toJson(QJsonDocument::Compact));
-    ::close(clientFd);
+    sendAll(clientFd.get(), QJsonDocument(resp).toJson(QJsonDocument::Compact));
 }
 
 QJsonObject IpcServer::dispatch(const QJsonObject& req) {
@@ -888,18 +886,12 @@ QJsonObject runOneshot(DeviceRegistry& reg, const QString& query, Fn&& action) {
     state.deviceName = t.displayName;
     state.deviceMac = t.mac;
     FrameDecoder dec;
-    try {
-        if (!conn.initialBytes.isEmpty()) {
-            for (const Frame& f : dec.feed(conn.initialBytes)) {
-                applyFrameToState(f, state);
-            }
+    if (!conn.initialBytes.isEmpty()) {
+        for (const Frame& f : dec.feed(conn.initialBytes)) {
+            applyFrameToState(f, state);
         }
-        action(conn.fd, profile, state, dec);
-    } catch (...) {
-        ::close(conn.fd);
-        throw;
     }
-    ::close(conn.fd);
+    action(conn.fd.get(), profile, state, dec);
     return state.toJson();
 }
 

@@ -176,7 +176,6 @@ QByteArray encodeFrame(uint8_t version, uint16_t vendor, uint16_t command,
 
 class FrameDecoder {
 public:
-    void reset() { m_buf.clear(); }
     QList<Frame> feed(const QByteArray& chunk);
 
 private:

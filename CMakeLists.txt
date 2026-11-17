@@ -6,6 +6,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
+option(ENABLE_SANITIZERS "Enable AddressSanitizer, LeakSanitizer, and UndefinedBehaviorSanitizer" OFF)
+add_compile_options(-Wall -Wextra -Wpedantic)
+if(ENABLE_SANITIZERS)
+    add_compile_options(-fsanitize=address,leak,undefined -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address,leak,undefined)
+endif()
+
 include(GNUInstallDirs)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Qml Quick DBus)

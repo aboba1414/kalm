@@ -13,6 +13,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QSystemTrayIcon>
+#include <QThreadPool>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QWindow>
@@ -70,6 +71,7 @@ class KalmBackend : public QObject {
 
 public:
     KalmBackend(KalmSession& session, DeviceRegistry& registry, QObject* parent = nullptr);
+    ~KalmBackend() override;
 
     void bindWindow(QWindow* win);
 
@@ -125,6 +127,7 @@ public Q_SLOTS:
     void refreshSavedDevicesAsync();
     void setLanguageByIndex(int index);
     void setNoiseByIndex(int index);
+    void toggleNoiseAsync();
     void setAncLevelByIndex(int index);
     void setTransEffectByIndex(int index);
     void setEqByIndex(int index);
@@ -166,6 +169,7 @@ private:
 
     KalmSession& m_session;
     DeviceRegistry& m_registry;
+    QThreadPool m_pool;
     EarbudState m_state;
     QVariantList m_languageModel;
     QVariantList m_ancLevelModel;

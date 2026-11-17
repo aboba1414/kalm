@@ -18,6 +18,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QSet>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QTimer>
@@ -25,14 +26,18 @@
 
 #include <csignal>
 #include <iostream>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace {
 
-kalm::KalmBackend* g_backendInstance = nullptr;
+int g_sigPair[2] = {-1, -1};
 
 void handleUnixSignal(int) {
-    if (g_backendInstance) {
-        QMetaObject::invokeMethod(g_backendInstance, &kalm::KalmBackend::quitApp, Qt::QueuedConnection);
+    if (g_sigPair[0] >= 0) {
+        const char b = 1;
+        const ssize_t unused = ::write(g_sigPair[0], &b, 1);
+        (void)unused;
     }
 }
 
@@ -244,7 +249,6 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
 
     kalm::KalmBackend backend(session, registry);
     backendPtr = &backend;
-    g_backendInstance = &backend;
 
     kalm::KalmTrayController tray(session, backend);
     kalm::IpcServer ipc(session, [&]() { backend.pushShowFromWorker(); });
@@ -256,6 +260,8 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
         std::cerr << "Failed to load Kirigami QML interface.\n";
+        ipc.stop();
+        session.stop();
         return 1;
     }
 
@@ -270,11 +276,31 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     QObject::connect(&btTimer, &QTimer::timeout, &backend, &kalm::KalmBackend::refreshSavedDevicesAsync);
     btTimer.start();
 
-    std::signal(SIGINT, handleUnixSignal);
-    std::signal(SIGTERM, handleUnixSignal);
+    kalm::UniqueFd sigWriteFd;
+    kalm::UniqueFd sigReadFd;
+    std::unique_ptr<QSocketNotifier> sigNotifier;
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, g_sigPair) == 0) {
+        sigWriteFd.reset(g_sigPair[0]);
+        sigReadFd.reset(g_sigPair[1]);
+        sigNotifier = std::make_unique<QSocketNotifier>(sigReadFd.get(), QSocketNotifier::Read);
+        QObject::connect(sigNotifier.get(), &QSocketNotifier::activated, &backend, [&]() {
+            sigNotifier->setEnabled(false);
+            char tmp = 0;
+            const ssize_t unused = ::read(sigReadFd.get(), &tmp, 1);
+            (void)unused;
+            backend.quitApp();
+        });
+        std::signal(SIGINT, handleUnixSignal);
+        std::signal(SIGTERM, handleUnixSignal);
+    }
 
     const int rc = app.exec();
-    g_backendInstance = nullptr;
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+    g_sigPair[0] = -1;
+    g_sigPair[1] = -1;
+    sigNotifier.reset();
+
     backendPtr = nullptr;
     tray.hide();
     ipc.stop();
@@ -654,7 +680,7 @@ int main(int argc, char** argv) {
 
         throw std::runtime_error(QStringLiteral("Unknown command '%1'. See kalm --help").arg(subcmd).toStdString());
     } catch (const std::exception& ex) {
-        err << kalm::trKey("Error") << ": " << QString::fromUtf8(ex.what()) << "\n";
+        err << kalm::trKey("err_prefix") << ": " << QString::fromUtf8(ex.what()) << "\n";
         return 1;
     }
 }
