@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "match": "air3pro",
+      "label": "vivo / iQOO TWS Air3 Pro (GAIA v3)",
+      "gaia_version": 3,
+      "noise_query_hex": "",
+      "noise_suffix_hex": "0400"
+    },
+    {
+      "match": "tws3e",
+      "label": "vivo TWS 3e (GAIA v3)",
+      "gaia_version": 3,
+      "noise_query_hex": "",
+      "noise_suffix_hex": "03"
+    }
+  ],
+  "default": {
+    "label": "vivo / iQOO Family Default (GAIA v4)",
+    "gaia_version": 4,
+    "noise_query_hex": "00",
+    "noise_suffix_hex": "0301"
+  }
+}

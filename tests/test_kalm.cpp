@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "i18n.hpp"
+#include "probe.hpp"
 #include "protocol.hpp"
 #include "registry.hpp"
 
@@ -12,7 +13,12 @@
 int main() {
     using namespace kalm;
 
-    // 1. Protocol & ANC degrees encoding
+    // 1. Protocol & ANC degrees encoding + models.json lookup
+    assert(maskMacForReport(QStringLiteral("1c:ba:b8:0f:5a:0f")) == u"1C:BA:B8:XX:XX:XX");
+    const WireProfile air3 = selectProfile(QStringLiteral("vivo TWS Air3 Pro"));
+    assert(air3.gaiaVersion == 3);
+    assert(air3.noiseSetSuffix.toHex() == "0400");
+
     const WireProfile v4 = selectProfile(QStringLiteral("vivo TWS 5 Hi-Fi"));
     assert(buildHandshake().toHex() == "ff040000000a0300");
     assert(buildSetNoiseMode(NoiseMode::Anc, v4).toHex() == "ff040003001b0130000301");

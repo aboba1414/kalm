@@ -1,0 +1,58 @@
+name: New Earbud Model Support
+description: Request support for a vivo / iQOO (or compatible GAIA) earbud model
+title: "[Device Support]: "
+labels: ["device-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping expand **Kalm** hardware support!
+        MAC addresses (last 3 bytes) and paired host names are **automatically masked** by `kalm probe`.
+
+  - type: input
+    id: model
+    attributes:
+      label: Earbud Model Name
+      description: Exact commercial name and Bluetooth name (if different)
+      placeholder: e.g. vivo TWS 5 Pro / iQOO TWS 2
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware Version (if known)
+      placeholder: e.g. 2.10.55
+
+  - type: textarea
+    id: features
+    attributes:
+      label: Features Available in Official Mobile App
+      description: List which ANC modes/levels, transparency modes, EQ presets, or multipoint controls this model has on Android/iOS.
+      placeholder: |
+        - ANC levels: Adaptive, Mild, Standard, Deep
+        - Transparency: Standard, Vocal enhancement
+        - Game Mode: Yes
+        - Multipoint: Yes
+    validations:
+      required: true
+
+  - type: textarea
+    id: probe_output
+    attributes:
+      label: Diagnostic Probe Output
+      description: |
+        Connect the earbuds via Bluetooth and take them out of the case, then either:
+        - Open **Kalm → Drawer (☰) → Diagnostic Report… → Copy Report to Clipboard**, OR
+        - Run `kalm probe` in a terminal and paste the output below.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: live_events
+    attributes:
+      label: Live Event Capture (Optional — very helpful if ANC modes behave differently)
+      description: |
+        Run `kalm probe --listen 15` and toggle ANC / Transparency / Off (by squeezing the earbud stem or switching in the mobile app connected via multipoint), then paste the captured frames here.
+      render: markdown

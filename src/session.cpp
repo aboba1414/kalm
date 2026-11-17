@@ -2,6 +2,7 @@
 #include "session.hpp"
 
 #include "i18n.hpp"
+#include "probe.hpp"
 #include "transport.hpp"
 
 #include <QDir>
@@ -426,6 +427,26 @@ bool KalmSession::findEarbuds(bool ring) {
         .has_value();
 }
 
+QString KalmSession::runProbe(const QString& deviceQuery, int listenSeconds) {
+    m_paused.store(true);
+    closeSocket(false);
+    wakeWorker();
+    ::usleep(300 * 1000);
+
+    QString report;
+    try {
+        report = generateDiagnosticReport(m_registry, deviceQuery, listenSeconds);
+    } catch (...) {
+        m_paused.store(false);
+        wakeWorker();
+        throw;
+    }
+
+    m_paused.store(false);
+    wakeWorker();
+    return report;
+}
+
 void KalmSession::runLoop() {
     auto sleepInterruptible = [this](int ms) {
         QMutexLocker lock(&m_wakeMtx);
@@ -436,6 +457,10 @@ void KalmSession::runLoop() {
     };
 
     while (!m_stop.load()) {
+        if (m_paused.load()) {
+            sleepInterruptible(300);
+            continue;
+        }
         QMap<QString, BluezDevice> bluezMap;
         for (const auto& d : listBluezDevices(false, false)) {
             bluezMap.insert(d.mac, d);
@@ -762,6 +787,12 @@ QJsonObject IpcServer::dispatch(const QJsonObject& req) {
     if (cmd == u"set_game") {
         const bool ok = m_session.setLowLatency(req.value(QStringLiteral("enabled")).toBool());
         return QJsonObject{{QStringLiteral("ok"), ok}, {QStringLiteral("state"), m_session.snapshot().toJson()}};
+    }
+    if (cmd == u"probe") {
+        const QString q = req.value(QStringLiteral("device")).toString();
+        const int listenSec = req.value(QStringLiteral("listen")).toInt(0);
+        const QString report = m_session.runProbe(q, listenSec);
+        return QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("report"), report}};
     }
     return QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Unknown IPC command")}};
 }

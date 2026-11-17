@@ -5,6 +5,7 @@
 #include "transport.hpp"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QColor>
 #include <QFont>
 #include <QMetaObject>
@@ -525,6 +526,38 @@ void KalmBackend::openSystemBluetoothSettings() {
             QProcess::startDetached(cmd.first(), cmd.mid(1));
             return;
         }
+    }
+}
+
+void KalmBackend::runDiagnosticProbe() {
+    if (m_probeBusy) return;
+    m_probeBusy = true;
+    m_probeReport = trKey("dlg_probe_running");
+    Q_EMIT probeChanged();
+
+    std::thread([this]() {
+        QString rep;
+        try {
+            rep = m_session.runProbe();
+        } catch (const std::exception& ex) {
+            rep = QString::fromUtf8(ex.what());
+        }
+        QMetaObject::invokeMethod(
+            this,
+            [this, rep]() {
+                m_probeReport = rep;
+                m_probeBusy = false;
+                Q_EMIT probeChanged();
+            },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void KalmBackend::copyReportToClipboard() {
+    if (m_probeReport.isEmpty()) return;
+    if (auto* cb = QApplication::clipboard()) {
+        cb->setText(m_probeReport);
+        setBannerMain(trKey("msg_copied"), 1);
     }
 }
 

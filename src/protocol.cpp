@@ -3,9 +3,12 @@
 
 #include "i18n.hpp"
 
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QStandardPaths>
 
 namespace kalm {
 
@@ -245,13 +248,46 @@ WireProfile selectProfile(const QString& deviceName) {
     for (QChar ch : deviceName) {
         if (ch.isLetterOrNumber()) norm.append(ch.toLower());
     }
-    if (norm.contains(u"air3pro")) {
-        return {QStringLiteral("vivo TWS Air3 Pro (GAIA v3)"), 3, {}, QByteArray("\x04\x00", 2)};
+
+    auto parseEntry = [](const QJsonObject& o) -> WireProfile {
+        return {
+            o.value(QStringLiteral("label")).toString(QStringLiteral("Custom GAIA Profile")),
+            static_cast<uint8_t>(o.value(QStringLiteral("gaia_version")).toInt(4)),
+            QByteArray::fromHex(o.value(QStringLiteral("noise_query_hex")).toString().toLatin1()),
+            QByteArray::fromHex(o.value(QStringLiteral("noise_suffix_hex")).toString().toLatin1()),
+        };
+    };
+
+    QString cfgBase = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    if (cfgBase.isEmpty()) cfgBase = QDir::homePath() + QStringLiteral("/.config");
+    const QStringList sources = {
+        cfgBase + QStringLiteral("/kalm/models.json"),
+        QStringLiteral(":/models.json"),
+    };
+
+    WireProfile fallback{QStringLiteral("vivo TWS 4/5 Family (GAIA v4)"), 4, QByteArray("\x00", 1), QByteArray("\x03\x01", 2)};
+    for (const QString& src : sources) {
+        QFile f(src);
+        if (!f.exists() || !f.open(QIODevice::ReadOnly)) continue;
+        const auto doc = QJsonDocument::fromJson(f.readAll());
+        if (!doc.isObject()) continue;
+        const QJsonObject root = doc.object();
+        if (root.contains(QStringLiteral("default")) && root.value(QStringLiteral("default")).isObject()) {
+            fallback = parseEntry(root.value(QStringLiteral("default")).toObject());
+        }
+        for (const QJsonValue& v : root.value(QStringLiteral("models")).toArray()) {
+            if (!v.isObject()) continue;
+            const QJsonObject m = v.toObject();
+            QString pat;
+            for (QChar ch : m.value(QStringLiteral("match")).toString()) {
+                if (ch.isLetterOrNumber()) pat.append(ch.toLower());
+            }
+            if (!pat.isEmpty() && norm.contains(pat)) {
+                return parseEntry(m);
+            }
+        }
     }
-    if (norm.contains(u"tws3e")) {
-        return {QStringLiteral("vivo TWS 3e (GAIA v3)"), 3, {}, QByteArray("\x03", 1)};
-    }
-    return {QStringLiteral("vivo TWS 4/5 Family (GAIA v4)"), 4, QByteArray("\x00", 1), QByteArray("\x03\x01", 2)};
+    return fallback;
 }
 
 QString MultiConnectDevice::macStr() const {

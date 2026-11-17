@@ -17,6 +17,7 @@ struct BluezDevice {
     bool connected = false;
     bool paired = false;
     QString icon;
+    QString modalias;
     QStringList uuids;
     std::optional<int> batteryPct;
 

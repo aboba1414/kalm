@@ -334,6 +334,7 @@ QList<BluezDevice> listBluezDevices(bool onlyVivo, bool onlyAudio) {
         item.connected = devProps.value(QStringLiteral("Connected")).toBool();
         item.paired = devProps.value(QStringLiteral("Paired")).toBool();
         item.icon = devProps.value(QStringLiteral("Icon")).toString();
+        item.modalias = devProps.value(QStringLiteral("Modalias")).toString();
         item.uuids = devProps.value(QStringLiteral("UUIDs")).toStringList();
         if (battProps.contains(QStringLiteral("Percentage"))) {
             item.batteryPct = battProps.value(QStringLiteral("Percentage")).toInt();

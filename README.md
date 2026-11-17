@@ -10,7 +10,8 @@ Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlli
 - **Multiple Earbuds**: add via Bluetooth scanner or manual MAC address, rename, remove, and switch manually or automatically when connected.
 - **KDE Plasma System Tray**: mode-colored tray badge, middle-click mode cycling, right-click menu for modes, ANC levels, EQ, and saved earbuds.
 - **Full Hardware Control**: Left/Right/Case battery & in-ear status, *DeepX / Ultimate Master (Hi-Fi)* EQ presets, low-latency Game Mode, stem long-press cycle, dual-device Multipoint management, and sound alert Finder.
-- **Localization**: **English** (default) and **Russian** built-in, switchable live in the UI (`Application → Language`) or via CLI, with zero-rebuild JSON extensibility.
+- **Built-in Protocol Probe**: 1-click privacy-safe diagnostic dump (`kalm probe` / Drawer → *Diagnostic Report…*) for adding new earbud models.
+- **Localization**: **English** (default) and **Russian** built-in, switchable live in **Drawer (☰) → Language** or via CLI, with zero-rebuild JSON extensibility.
 
 ---
 
@@ -86,6 +87,7 @@ kalm toggle [--modes anc,trans] [--notify]   # Cycle modes (ideal for global sho
 kalm eq master                               # standard | vocal | bass | treble | audiobook | master
 kalm game on | off                           # Low-latency game mode
 kalm lang en | ru | auto                     # Persist interface language
+kalm probe [-d <MAC|name>] [--listen 15]     # Privacy-safe protocol dump for new earbuds
 kalm devices [list|scan|add <MAC> --alias <name>|use <name>|rename <name> <new>|remove <name>]
 ```
 
@@ -95,5 +97,34 @@ kalm devices [list|scan|add <MAC> --alias <name>|use <name>|rename <name> <new>|
 
 `translations/en.json` and `translations/ru.json` are embedded into the binary. To add a new language (e.g. `de`) **without recompiling**:
 1. Copy `translations/en.json` to `~/.local/share/kalm/translations/de.json` and set `"lang_name"` (e.g. `"Deutsch"`).
-2. Translate the values (any untranslated keys automatically fall back to `en.json`).
-3. Select the new language under **Application → Language** in Kalm (or run `kalm lang de`).
+2. Translate the values (untranslated keys automatically fall back to `en.json`).
+3. Select it in **Drawer (☰) → Language** or run `kalm lang de`.
+
+---
+
+## Contributing
+
+Contributions, bug fixes, translations, and new earbud profiles are welcome!
+
+### AI Coding Agents Policy
+- **AI coding agents and LLM-assisted PRs are explicitly allowed and welcome.**
+- Please ensure every PR compiles cleanly (`cmake --build build`), passes all unit tests (`ctest --test-dir build --output-on-failure`), stays focused on a single concern, and clearly notes whether protocol changes were verified on real hardware or inferred.
+
+### How to Open Issues
+Use the repository Issue Templates:
+- **Bug Report** — include your distro, desktop environment, Kalm version, earbud model, and output of `kalm status` / `kalm probe`.
+- **New Earbud Model Support** — follow the steps below so we have everything needed to add your earbuds quickly.
+
+### Requesting Support for New Earbuds (What Users Need to Do)
+1. Pair and connect your earbuds via Bluetooth, and **take both earbuds out of the charging case**.
+2. Collect a read-only diagnostic dump (personal MAC bytes and paired host names are automatically masked):
+   - **From GUI:** open **Drawer (☰) → Diagnostic Report… → Copy Report to Clipboard**.
+   - **From terminal:** run `kalm probe` (or `kalm probe -d "Your Earbuds Name"`).
+3. *(Optional, very helpful if ANC modes differ)* Run live event capture for 15 seconds while toggling ANC / Transparency / Off by squeezing the earbud stem (or switching modes in the mobile app connected via multipoint):
+   ```bash
+   kalm probe --listen 15
+   ```
+4. Open a **New Earbud Model Support** issue and paste the output along with the list of features available in the official mobile app.
+
+### Adding New Earbud Profiles (Maintainer / Contributor Guide)
+Wire-level differences between vivo / iQOO generations (GAIA v3 vs v4, noise query byte, and noise payload suffix) are defined in [`models.json`](models.json). You can test a new model profile locally **without recompiling** by creating `~/.config/kalm/models.json` with the same structure, then submit the verified entry in a PR.

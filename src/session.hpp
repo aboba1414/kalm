@@ -55,6 +55,7 @@ public:
     bool setNoiseCycle(int cycleCode);
     bool setDeviceConnection(const QString& targetMac, bool connect);
     bool findEarbuds(bool ring);
+    QString runProbe(const QString& deviceQuery = {}, int listenSeconds = 0);
 
 private:
     struct Waiter {
@@ -90,6 +91,7 @@ private:
     EarbudState m_state;
 
     std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_paused{false};
     QMutex m_wakeMtx;
     QWaitCondition m_wakeCv;
     bool m_woken = false;

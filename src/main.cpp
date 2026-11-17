@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "backend.hpp"
 #include "i18n.hpp"
+#include "probe.hpp"
 #include "protocol.hpp"
 #include "registry.hpp"
 #include "session.hpp"
@@ -8,6 +9,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -190,6 +192,7 @@ void printHelp() {
         << "  kalm eq <standard|vocal|bass|treble|audiobook|master>\n"
         << "  kalm game <on|off>\n"
         << "  kalm lang <en|ru|auto>\n"
+        << "  kalm probe [-d <MAC|name>] [--listen <sec>] [--output <file>]\n"
         << "  kalm devices [list|scan|add <MAC> [--alias <name>]|use <target>|rename <target> <name>|remove <target>]\n";
 }
 
@@ -392,6 +395,8 @@ int main(int argc, char** argv) {
     bool wantVersion = false;
     QString langOverride;
     QString deviceQuery;
+    QString outputFile;
+    int listenSeconds = 0;
     QString modesCsv = QStringLiteral("anc,trans,off");
     QStringList positional;
 
@@ -411,6 +416,14 @@ int main(int argc, char** argv) {
             langOverride = rawArgs[++i];
         } else if ((a == u"-d" || a == u"--device" || a == u"--mac") && i + 1 < rawArgs.size()) {
             deviceQuery = rawArgs[++i];
+        } else if ((a == u"-o" || a == u"--output") && i + 1 < rawArgs.size()) {
+            outputFile = rawArgs[++i];
+        } else if (a == u"--listen") {
+            if (i + 1 < rawArgs.size() && !rawArgs[i + 1].startsWith(u'-')) {
+                listenSeconds = std::max(1, rawArgs[++i].toInt());
+            } else {
+                listenSeconds = 15;
+            }
         } else if (a == u"--modes" && i + 1 < rawArgs.size()) {
             modesCsv = rawArgs[++i];
         } else {
@@ -455,6 +468,34 @@ int main(int argc, char** argv) {
 
         if (subcmd == u"devices") {
             return handleDevicesSubcmd(positional.mid(1));
+        }
+
+        if (subcmd == u"probe") {
+            if (listenSeconds > 0) {
+                err << "Listening for earbud events for " << listenSeconds
+                    << "s (squeeze the stem or switch modes on phone now)...\n";
+                err.flush();
+            }
+            const int ipcTimeout = 12000 + listenSeconds * 1000;
+            const auto ipc = kalm::ipcRequest(
+                QJsonObject{{QStringLiteral("cmd"), QStringLiteral("probe")},
+                            {QStringLiteral("device"), deviceQuery},
+                            {QStringLiteral("listen"), listenSeconds}},
+                ipcTimeout);
+            const QString rep = (ipc && ipc->value(QStringLiteral("ok")).toBool())
+                                    ? ipc->value(QStringLiteral("report")).toString()
+                                    : kalm::generateDiagnosticReport(reg, deviceQuery, listenSeconds);
+            if (!outputFile.isEmpty()) {
+                QFile f(outputFile);
+                if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                    throw std::runtime_error(QStringLiteral("Cannot write to '%1'").arg(outputFile).toStdString());
+                }
+                f.write(rep.toUtf8());
+                out << "Saved diagnostic report to " << outputFile << "\n";
+            } else {
+                out << rep;
+            }
+            return 0;
         }
 
         if (subcmd == u"status") {

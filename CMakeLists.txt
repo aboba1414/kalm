@@ -13,6 +13,8 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Qml Quick DBus)
 add_library(kalm_core STATIC
     src/i18n.cpp
     src/i18n.hpp
+    src/probe.cpp
+    src/probe.hpp
     src/protocol.cpp
     src/protocol.hpp
     src/transport.cpp

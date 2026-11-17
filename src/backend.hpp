@@ -65,6 +65,8 @@ class KalmBackend : public QObject {
 
     Q_PROPERTY(QString bannerText READ bannerText NOTIFY bannerChanged)
     Q_PROPERTY(int bannerType READ bannerType NOTIFY bannerChanged)
+    Q_PROPERTY(bool probeBusy READ probeBusy NOTIFY probeChanged)
+    Q_PROPERTY(QString probeReport READ probeReport NOTIFY probeChanged)
 
 public:
     KalmBackend(KalmSession& session, DeviceRegistry& registry, QObject* parent = nullptr);
@@ -116,6 +118,8 @@ public:
 
     QString bannerText() const { return m_bannerText; }
     int bannerType() const { return m_bannerType; }
+    bool probeBusy() const { return m_probeBusy; }
+    QString probeReport() const { return m_probeReport; }
 
 public Q_SLOTS:
     void refreshSavedDevicesAsync();
@@ -139,6 +143,8 @@ public Q_SLOTS:
     void connectBluetoothDevice(const QString& mac);
     void setAutoSwitch(bool enabled);
     void openSystemBluetoothSettings();
+    void runDiagnosticProbe();
+    void copyReportToClipboard();
     void clearBanner();
     void quitApp();
 
@@ -148,6 +154,7 @@ Q_SIGNALS:
     void devicesChanged();
     void discoveredChanged();
     void bannerChanged();
+    void probeChanged();
     void ringingChanged();
     void quittingChanged();
     void windowShowRequested();
@@ -169,6 +176,8 @@ private:
     QVariantList m_discoveredList;
     QString m_bannerText;
     int m_bannerType = 0;
+    bool m_probeBusy = false;
+    QString m_probeReport;
     bool m_ringing = false;
     bool m_quitting = false;
     QPointer<QWindow> m_window;

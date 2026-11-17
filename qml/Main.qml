@@ -41,18 +41,53 @@ Kirigami.ApplicationWindow {
         titleIcon: "audio-headset"
         isMenu: false
         modal: true
+        handleClosedToolTip: root.i18n.drawer_open
+        handleOpenToolTip: root.i18n.drawer_close
 
-        header: ColumnLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
-
-            Kirigami.Heading {
-                level: 4
-                text: root.i18n.window_my_earbuds
+        topContent: [
+            ColumnLayout {
+                Layout.fillWidth: true
                 Layout.leftMargin: Kirigami.Units.largeSpacing
+                Layout.rightMargin: Kirigami.Units.largeSpacing
                 Layout.topMargin: Kirigami.Units.smallSpacing
+                Layout.bottomMargin: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: root.i18n.lang_title
+                    font.weight: Font.DemiBold
+                    Layout.fillWidth: true
+                }
+
+                Controls.ComboBox {
+                    id: drawerLangCombo
+                    Layout.fillWidth: true
+                    model: backend.languageModel
+                    textRole: "text"
+                    valueRole: "value"
+                    currentIndex: backend.languageIndex
+                    displayText: (backend.languageIndex >= 0 && backend.languageIndex < backend.languageModel.length)
+                                 ? backend.languageModel[backend.languageIndex].text : ""
+                    onModelChanged: Qt.callLater(function() { drawerLangCombo.currentIndex = backend.languageIndex })
+                    onActivated: function(index) {
+                        backend.setLanguageByIndex(index)
+                    }
+                    Connections {
+                        target: backend
+                        function onLanguageChanged() {
+                            Qt.callLater(function() {
+                                drawerLangCombo.currentIndex = backend.languageIndex
+                            })
+                        }
+                    }
+                }
+
+                Kirigami.Separator {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Kirigami.Units.smallSpacing
+                }
             }
-        }
+        ]
 
         actions: [
             Kirigami.Action {
@@ -67,6 +102,14 @@ Kirigami.ApplicationWindow {
                 text: root.i18n.action_kde_bt_settings
                 icon.name: "preferences-system-bluetooth"
                 onTriggered: backend.openSystemBluetoothSettings()
+            },
+            Kirigami.Action {
+                text: root.i18n.action_probe
+                icon.name: "tools-report-bug"
+                onTriggered: {
+                    backend.runDiagnosticProbe()
+                    probeDialog.open()
+                }
             },
             Kirigami.Action {
                 separator: true
@@ -597,6 +640,7 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormCard {
             maximumWidth: root.cardMaxW
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
             enabled: backend.connected
 
             FormCard.FormButtonDelegate {
@@ -608,44 +652,6 @@ Kirigami.ApplicationWindow {
                         backend.stopFindEarbuds()
                     } else {
                         findConfirmDialog.open()
-                    }
-                }
-            }
-        }
-
-        // ---- Application Settings Section (Language) ----
-        FormCard.FormHeader {
-            maximumWidth: root.cardMaxW
-            title: root.i18n.section_settings
-            topPadding: Kirigami.Units.largeSpacing
-            bottomPadding: Kirigami.Units.largeSpacing + 2
-        }
-
-        FormCard.FormCard {
-            maximumWidth: root.cardMaxW
-            Layout.bottomMargin: Kirigami.Units.largeSpacing
-
-            FormCard.FormComboBoxDelegate {
-                id: langCombo
-                objectName: "langCombo"
-                text: root.i18n.lang_title
-                description: root.i18n.lang_desc
-                model: backend.languageModel
-                textRole: "text"
-                valueRole: "value"
-                currentIndex: backend.languageIndex
-                displayText: (backend.languageIndex >= 0 && backend.languageIndex < backend.languageModel.length)
-                             ? backend.languageModel[backend.languageIndex].text : ""
-                onModelChanged: Qt.callLater(function() { langCombo.currentIndex = backend.languageIndex })
-                onActivated: function(index) {
-                    backend.setLanguageByIndex(index)
-                }
-                Connections {
-                    target: backend
-                    function onLanguageChanged() {
-                        Qt.callLater(function() {
-                            langCombo.currentIndex = backend.languageIndex
-                        })
                     }
                 }
             }
@@ -775,6 +781,47 @@ Kirigami.ApplicationWindow {
                 source: "dialog-warning"
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium
+            }
+        }
+    }
+
+    // ---- Dialog: Diagnostic Report for Adding New Earbuds ----
+    FormCard.FormCardDialog {
+        id: probeDialog
+        title: root.i18n.dlg_probe_title
+        standardButtons: Controls.Dialog.Close
+
+        FormCard.FormSectionText {
+            text: root.i18n.dlg_probe_hint
+        }
+
+        Controls.ScrollView {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 12
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            Layout.bottomMargin: Kirigami.Units.smallSpacing
+
+            Controls.TextArea {
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                font.family: "monospace"
+                font.pointSize: 9
+                text: backend.probeReport
+            }
+        }
+
+        FormCard.FormDelegateSeparator {}
+
+        FormCard.FormButtonDelegate {
+            enabled: !backend.probeBusy && backend.probeReport.length > 0
+            text: root.i18n.dlg_probe_copy
+            icon.name: "edit-copy-symbolic"
+            onClicked: {
+                backend.copyReportToClipboard()
+                probeDialog.close()
             }
         }
     }
