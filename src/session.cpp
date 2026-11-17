@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "session.hpp"
 
+#include "i18n.hpp"
 #include "transport.hpp"
 
 #include <QDir>
@@ -280,14 +281,21 @@ bool KalmSession::refresh() {
     return ok;
 }
 
-bool KalmSession::setNoiseMode(NoiseMode mode) {
+bool KalmSession::setNoiseMode(NoiseMode mode,
+                               std::optional<int> ancLevel,
+                               std::optional<int> transEffect) {
     WireProfile p;
+    std::optional<int> effAnc;
+    std::optional<int> effTrans;
     {
         QMutexLocker lock(&m_lock);
         p = m_profile;
+        effAnc = ancLevel.has_value() ? ancLevel : m_state.noiseEffect;
+        effTrans = transEffect.has_value() ? transEffect : m_state.transparencyEffect;
     }
+
     const auto resp = sendAndWait(
-        buildSetNoiseMode(mode, p),
+        buildSetNoiseMode(mode, p, effAnc, effTrans),
         [mode](const Frame& f) {
             return (f.command == kCmdAckNoiseMode || f.command == kCmdReportNoiseMode) &&
                    f.payload.size() >= 2 &&
@@ -303,6 +311,14 @@ bool KalmSession::setNoiseMode(NoiseMode mode) {
         1500);
     return q && q->payload.size() >= 2 &&
            static_cast<uint8_t>(q->payload[1]) == static_cast<uint8_t>(mode);
+}
+
+bool KalmSession::setAncLevel(int levelCode) {
+    return setNoiseMode(NoiseMode::Anc, levelCode, std::nullopt);
+}
+
+bool KalmSession::setTransparencyEffect(int transCode) {
+    return setNoiseMode(NoiseMode::Transparency, std::nullopt, transCode);
 }
 
 std::optional<NoiseMode> KalmSession::toggleNoiseMode(const QList<NoiseMode>& cycle) {
@@ -711,11 +727,19 @@ QJsonObject IpcServer::dispatch(const QJsonObject& req) {
     }
     if (cmd == u"set_noise") {
         const auto m = parseNoiseModeStr(req.value(QStringLiteral("mode")).toString());
-        if (!m) return QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Неизвестный режим")}};
-        const bool ok = m_session.setNoiseMode(*m);
+        if (!m) return QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Invalid mode")}};
+        std::optional<int> ancLvl;
+        std::optional<int> transEff;
+        if (req.contains(QStringLiteral("anc_level")) && !req.value(QStringLiteral("anc_level")).isNull()) {
+            ancLvl = req.value(QStringLiteral("anc_level")).toInt();
+        }
+        if (req.contains(QStringLiteral("trans_effect")) && !req.value(QStringLiteral("trans_effect")).isNull()) {
+            transEff = req.value(QStringLiteral("trans_effect")).toInt();
+        }
+        const bool ok = m_session.setNoiseMode(*m, ancLvl, transEff);
         return QJsonObject{
             {QStringLiteral("ok"), ok},
-            {QStringLiteral("error"), ok ? QJsonValue() : QJsonValue(QStringLiteral("Наушники не подтвердили переключение режима"))},
+            {QStringLiteral("error"), ok ? QJsonValue() : QJsonValue(trKey("err_mode_unconfirmed"))},
             {QStringLiteral("state"), m_session.snapshot().toJson()},
         };
     }
@@ -727,7 +751,7 @@ QJsonObject IpcServer::dispatch(const QJsonObject& req) {
         const auto nxt = m_session.toggleNoiseMode(cycle);
         return QJsonObject{
             {QStringLiteral("ok"), nxt.has_value()},
-            {QStringLiteral("error"), nxt ? QJsonValue() : QJsonValue(QStringLiteral("Не удалось переключить режим"))},
+            {QStringLiteral("error"), nxt ? QJsonValue() : QJsonValue(trKey("err_mode_unconfirmed"))},
             {QStringLiteral("state"), m_session.snapshot().toJson()},
         };
     }
@@ -758,15 +782,12 @@ TargetInfo resolveOneshotTarget(DeviceRegistry& reg, const QString& query) {
     if (!query.trimmed().isEmpty()) {
         const auto resolved = reg.resolveQuery(query);
         if (!resolved) {
-            throw std::runtime_error(
-                QStringLiteral("Наушники '%1' не найдены в списке сохранённых.").arg(query).toStdString());
+            throw std::runtime_error(trKey("err_device_not_saved").arg(query).toStdString());
         }
         const auto bdev = findBluezByMac(resolved->mac);
         if (bdev && !bdev->connected) {
             throw std::runtime_error(
-                QStringLiteral("Наушники %1 (%2) сейчас не подключены по Bluetooth.")
-                    .arg(resolved->displayName(), resolved->mac)
-                    .toStdString());
+                trKey("err_not_connected_bt").arg(resolved->displayName(), resolved->mac).toStdString());
         }
         return {resolved->mac, resolved->displayName(), bdev ? bdev->name : resolved->name,
                 bdev ? bdev->path : QString{}};
@@ -786,9 +807,7 @@ TargetInfo resolveOneshotTarget(DeviceRegistry& reg, const QString& query) {
             }
         }
         throw std::runtime_error(
-            QStringLiteral("Наушники %1 (%2) сейчас не подключены по Bluetooth.")
-                .arg(active->displayName(), active->mac)
-                .toStdString());
+            trKey("err_not_connected_bt").arg(active->displayName(), active->mac).toStdString());
     }
 
     for (const auto& bdev : listBluezDevices(true, false)) {
@@ -796,7 +815,7 @@ TargetInfo resolveOneshotTarget(DeviceRegistry& reg, const QString& query) {
             return {bdev.mac, bdev.name, bdev.name, bdev.path};
         }
     }
-    throw std::runtime_error("Подключённые наушники vivo / iQOO TWS не найдены.");
+    throw std::runtime_error(trKey("err_no_vivo_found").toStdString());
 }
 
 bool recvUntil(int fd, FrameDecoder& dec, EarbudState& state, const WireProfile& profile,
@@ -885,10 +904,20 @@ QJsonObject oneshotStatus(DeviceRegistry& reg, const QString& deviceQuery) {
     });
 }
 
-QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode, const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [mode](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
+                            std::optional<int> ancLevel,
+                            std::optional<int> transEffect,
+                            const QString& deviceQuery) {
+    return runOneshot(reg, deviceQuery, [=](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildQueryBattery());
-        sendAll(fd, buildSetNoiseMode(mode, profile));
+        // Query current noise state first so we preserve existing ancLevel / transEffect if not explicitly overridden
+        if (!ancLevel.has_value() || !transEffect.has_value()) {
+            sendAll(fd, buildQueryNoiseMode(profile));
+            recvUntil(fd, dec, state, profile, [](const Frame& f) { return f.command == kCmdReportNoiseMode; }, 800);
+        }
+        const auto effAnc = ancLevel.has_value() ? ancLevel : state.noiseEffect;
+        const auto effTrans = transEffect.has_value() ? transEffect : state.transparencyEffect;
+        sendAll(fd, buildSetNoiseMode(mode, profile, effAnc, effTrans));
         const bool ok = recvUntil(
             fd, dec, state, profile,
             [mode](const Frame& f) {
@@ -897,7 +926,7 @@ QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode, const QString& 
                        static_cast<uint8_t>(f.payload[1]) == static_cast<uint8_t>(mode);
             },
             2000);
-        if (!ok) throw std::runtime_error("Наушники не подтвердили смену режима шумоподавления.");
+        if (!ok) throw std::runtime_error(trKey("err_mode_unconfirmed").toStdString());
     });
 }
 
@@ -913,7 +942,7 @@ QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycl
             const qsizetype idx = order.indexOf(*state.noiseMode);
             if (idx >= 0) nxt = order[(idx + 1) % order.size()];
         }
-        sendAll(fd, buildSetNoiseMode(nxt, profile));
+        sendAll(fd, buildSetNoiseMode(nxt, profile, state.noiseEffect, state.transparencyEffect));
         const bool ok = recvUntil(
             fd, dec, state, profile,
             [nxt](const Frame& f) {
@@ -922,7 +951,7 @@ QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycl
                        static_cast<uint8_t>(f.payload[1]) == static_cast<uint8_t>(nxt);
             },
             2000);
-        if (!ok) throw std::runtime_error("Наушники не подтвердили переключение режима.");
+        if (!ok) throw std::runtime_error(trKey("err_mode_unconfirmed").toStdString());
     });
 }
 
@@ -933,7 +962,7 @@ QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& devic
             fd, dec, state, profile,
             [](const Frame& f) { return f.command == kCmdAckAudioEffect || f.command == kCmdReportAudioEffect; },
             1800);
-        if (!ok) throw std::runtime_error("Наушники не подтвердили смену эквалайзера.");
+        if (!ok) throw std::runtime_error("EQ change unconfirmed.");
     });
 }
 
@@ -944,7 +973,7 @@ QJsonObject oneshotSetGame(DeviceRegistry& reg, bool enabled, const QString& dev
             fd, dec, state, profile,
             [](const Frame& f) { return f.command == kCmdAckLowLatency || f.command == kCmdReportLowLatency; },
             1800);
-        if (!ok) throw std::runtime_error("Наушники не подтвердили переключение игрового режима.");
+        if (!ok) throw std::runtime_error("Game mode change unconfirmed.");
     });
 }
 

@@ -77,18 +77,33 @@ enum class NoiseMode : uint8_t {
     Transparency = 2,
 };
 
-QString noiseModeLabelRu(NoiseMode mode);
+QString noiseModeLabel(NoiseMode mode);
 QString noiseModeSlug(NoiseMode mode);
 std::optional<NoiseMode> parseNoiseModeStr(const QString& text);
 
 struct PresetEntry {
     int code;
-    const char* label;
+    const char* trKeyName;
+    const char* slug;
 };
 
+// ANC Degrees (0x0130 byte[1] = reduceNoiseModelConfig from vivo APK)
+const std::vector<PresetEntry>& ancLevelPresets();
+QString ancLevelLabel(int code);
+QString ancLevelSlug(int code);
+std::optional<int> parseAncLevelStr(const QString& text);
+
+// Transparency Effects (0x0130 byte[2] = transparentEffectConfig from vivo APK)
+const std::vector<PresetEntry>& transparencyPresets();
+QString transparencyLabel(int code);
+QString transparencySlug(int code);
+std::optional<int> parseTransparencyStr(const QString& text);
+
+// DeepX / Sound Effects
 const std::vector<PresetEntry>& audioEffectPresets();
 QString audioEffectLabel(int code);
 
+// Long-press cycle
 const std::vector<PresetEntry>& noiseCyclePresets();
 QString noiseCycleLabel(int code);
 
@@ -125,7 +140,7 @@ struct MultiConnectDevice {
     QString macStr() const;
     bool connected() const { return status != 0; }
     bool active() const { return status == 2; }
-    QString statusRu() const;
+    QString statusLabel() const;
 };
 
 struct EarbudState {
@@ -173,7 +188,9 @@ QByteArray buildHandshake();
 QList<QByteArray> buildRegisterNotifications();
 QByteArray buildQueryBattery();
 QByteArray buildQueryNoiseMode(const WireProfile& profile);
-QByteArray buildSetNoiseMode(NoiseMode mode, const WireProfile& profile);
+QByteArray buildSetNoiseMode(NoiseMode mode, const WireProfile& profile,
+                             std::optional<int> ancLevel = std::nullopt,
+                             std::optional<int> transEffect = std::nullopt);
 QByteArray buildQueryWearState(const WireProfile& profile);
 QByteArray buildQueryWearDetection(const WireProfile& profile);
 QByteArray buildSetWearDetection(bool enabled, const WireProfile& profile);

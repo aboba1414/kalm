@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "backend.hpp"
+#include "i18n.hpp"
 #include "protocol.hpp"
 #include "registry.hpp"
 #include "session.hpp"
@@ -51,28 +52,42 @@ void notifyDesktop(const QString& title, const QString& body) {
 QString formatBattCli(const QJsonValue& levelVal, bool charging, bool stale) {
     if (levelVal.isNull() || levelVal.isUndefined()) return QStringLiteral("—");
     const int lvl = levelVal.toInt();
-    const QString suffix = charging ? QStringLiteral(" ⚡") : (stale ? QStringLiteral(" (устар.)") : QString{});
+    const QString suffix = charging
+                               ? QStringLiteral(" ⚡")
+                               : (stale ? QStringLiteral(" (%1)").arg(kalm::trKey("batt_stale_short")) : QString{});
     return QStringLiteral("%1%%2").arg(lvl).arg(suffix);
 }
 
-QString wearCliRu(const QString& w) {
-    if (w == u"worn") return QStringLiteral("в ухе");
-    if (w == u"in_case") return QStringLiteral("в кейсе");
-    if (w == u"removed") return QStringLiteral("снят");
+QString wearCliLabel(const QString& w) {
+    if (w == u"worn") return kalm::trKey("wear_worn").toLower();
+    if (w == u"in_case") return kalm::trKey("wear_in_case").toLower();
+    if (w == u"removed") return kalm::trKey("wear_removed").toLower();
     return QStringLiteral("—");
 }
 
 void printStatusHuman(const QJsonObject& data) {
     QTextStream out(stdout);
     if (!data.value(QStringLiteral("connected")).toBool()) {
-        out << "Статус: Не подключено\n";
+        out << kalm::trKey("status_disconnected") << "\n";
         return;
     }
 
-    const QString name = data.value(QStringLiteral("device_name")).toString(QStringLiteral("Наушники"));
+    const QString name = data.value(QStringLiteral("device_name")).toString(QStringLiteral("Kalm"));
     const QString mac = data.value(QStringLiteral("device_mac")).toString();
     const QString fw = data.value(QStringLiteral("firmware")).toString(QStringLiteral("—"));
-    const QString mode = data.value(QStringLiteral("noise_mode_label")).toString(QStringLiteral("—"));
+
+    QString mode = QStringLiteral("—");
+    if (auto nm = kalm::parseNoiseModeStr(data.value(QStringLiteral("noise_mode")).toString())) {
+        mode = kalm::noiseModeLabel(*nm);
+        if (*nm == kalm::NoiseMode::Anc && !data.value(QStringLiteral("anc_level")).isNull()) {
+            const QString sub = kalm::ancLevelLabel(data.value(QStringLiteral("anc_level")).toInt());
+            if (!sub.isEmpty()) mode += QStringLiteral(" (%1)").arg(sub);
+        } else if (*nm == kalm::NoiseMode::Transparency && !data.value(QStringLiteral("transparency_effect")).isNull()) {
+            const QString sub = kalm::transparencyLabel(data.value(QStringLiteral("transparency_effect")).toInt());
+            if (!sub.isEmpty()) mode += QStringLiteral(" (%1)").arg(sub);
+        }
+    }
+
     const QJsonObject batt = data.value(QStringLiteral("battery")).toObject();
     const QJsonObject wear = data.value(QStringLiteral("wear")).toObject();
 
@@ -86,34 +101,51 @@ void printStatusHuman(const QJsonObject& data) {
                                         batt.value(QStringLiteral("case_charging")).toBool(),
                                         batt.value(QStringLiteral("case_stale")).toBool());
 
-    out << "Наушники:        " << name << " (" << mac << ")\n";
-    out << "Прошивка:        " << (fw.isEmpty() ? QStringLiteral("—") : fw) << "\n";
-    out << "Шумоподавление:  " << mode << "\n";
-    out << "Заряд:           Л: " << leftB << "   П: " << rightB << "   Кейс: " << caseB << "\n";
-    out << "Положение:       Л: " << wearCliRu(wear.value(QStringLiteral("left")).toString())
-        << "   П: " << wearCliRu(wear.value(QStringLiteral("right")).toString()) << "\n";
+    const QString lShort = kalm::trKey("batt_left").left(1);
+    const QString rShort = kalm::trKey("batt_right").left(1);
 
-    const QString eq = data.value(QStringLiteral("audio_effect_label")).toString();
-    if (!eq.isEmpty()) out << "Звук (DeepX):    " << eq << "\n";
+    auto padLabel = [](const QString& s) { return s.leftJustified(16, u' '); };
+
+    out << padLabel(kalm::trKey("cli_earbuds")) << " " << name << " (" << mac << ")\n";
+    out << padLabel(kalm::trKey("cli_firmware")) << " " << (fw.isEmpty() ? QStringLiteral("—") : fw) << "\n";
+    out << padLabel(kalm::trKey("cli_noise")) << " " << mode << "\n";
+    out << padLabel(kalm::trKey("cli_battery")) << " " << lShort << ": " << leftB << "   " << rShort << ": " << rightB
+        << "   " << kalm::trKey("batt_case") << ": " << caseB << "\n";
+    out << padLabel(kalm::trKey("cli_position")) << " " << lShort << ": "
+        << wearCliLabel(wear.value(QStringLiteral("left")).toString()) << "   " << rShort << ": "
+        << wearCliLabel(wear.value(QStringLiteral("right")).toString()) << "\n";
+
+    if (!data.value(QStringLiteral("audio_effect")).isNull()) {
+        const QString eq = kalm::audioEffectLabel(data.value(QStringLiteral("audio_effect")).toInt());
+        if (!eq.isEmpty()) out << padLabel(kalm::trKey("cli_sound")) << " " << eq << "\n";
+    }
 
     if (!data.value(QStringLiteral("low_latency")).isNull()) {
-        out << "Игровой режим:   "
-            << (data.value(QStringLiteral("low_latency")).toBool() ? QStringLiteral("Включён") : QStringLiteral("Выключен"))
+        out << padLabel(kalm::trKey("cli_game")) << " "
+            << (data.value(QStringLiteral("low_latency")).toBool() ? kalm::trKey("cli_enabled")
+                                                                   : kalm::trKey("cli_disabled"))
             << "\n";
     }
 
-    const QString nc = data.value(QStringLiteral("noise_cycle")).toObject().value(QStringLiteral("label")).toString();
-    if (!nc.isEmpty()) out << "Долгое нажатие:  " << nc << "\n";
+    const QJsonObject ncObj = data.value(QStringLiteral("noise_cycle")).toObject();
+    if (!ncObj.value(QStringLiteral("left")).isNull()) {
+        const QString nc = kalm::noiseCycleLabel(ncObj.value(QStringLiteral("left")).toInt());
+        if (!nc.isEmpty()) out << padLabel(kalm::trKey("cli_long_press")) << " " << nc << "\n";
+    }
 
     const QJsonArray devs = data.value(QStringLiteral("paired_devices")).toArray();
     if (!devs.isEmpty()) {
-        out << "Мультипоинт:\n";
+        out << kalm::trKey("cli_multipoint") << "\n";
         for (const QJsonValue& v : devs) {
             const QJsonObject d = v.toObject();
             const QString mark = d.value(QStringLiteral("connected")).toBool() ? QStringLiteral("●") : QStringLiteral("○");
+            const int stCode = d.value(QStringLiteral("status")).toInt();
+            const QString stLabel = (stCode == 2)
+                                        ? kalm::trKey("mp_connected_active")
+                                        : ((stCode == 1) ? kalm::trKey("mp_connected") : kalm::trKey("mp_disconnected"));
             out << "  " << mark << " " << d.value(QStringLiteral("name")).toString()
                 << " (" << d.value(QStringLiteral("mac")).toString() << ") — "
-                << d.value(QStringLiteral("status_label")).toString() << "\n";
+                << stLabel << "\n";
         }
     }
 }
@@ -121,14 +153,16 @@ void printStatusHuman(const QJsonObject& data) {
 QString battSummaryShort(const QJsonObject& data) {
     const QJsonObject b = data.value(QStringLiteral("battery")).toObject();
     QStringList parts;
+    const QString lShort = kalm::trKey("batt_left").left(1);
+    const QString rShort = kalm::trKey("batt_right").left(1);
     if (!b.value(QStringLiteral("left")).isNull()) {
-        parts.append(QStringLiteral("Л %1%").arg(b.value(QStringLiteral("left")).toInt()));
+        parts.append(QStringLiteral("%1 %2%").arg(lShort).arg(b.value(QStringLiteral("left")).toInt()));
     }
     if (!b.value(QStringLiteral("right")).isNull()) {
-        parts.append(QStringLiteral("П %1%").arg(b.value(QStringLiteral("right")).toInt()));
+        parts.append(QStringLiteral("%1 %2%").arg(rShort).arg(b.value(QStringLiteral("right")).toInt()));
     }
     if (!b.value(QStringLiteral("case")).isNull() && !b.value(QStringLiteral("case_stale")).toBool()) {
-        parts.append(QStringLiteral("Кейс %1%").arg(b.value(QStringLiteral("case")).toInt()));
+        parts.append(QStringLiteral("%1 %2%").arg(kalm::trKey("batt_case")).arg(b.value(QStringLiteral("case")).toInt()));
     }
     return parts.join(QStringLiteral(" · "));
 }
@@ -146,20 +180,19 @@ std::optional<int> parseEqPreset(const QString& raw) {
 
 void printHelp() {
     QTextStream out(stdout);
-    out << "Kalm v0.1 — управление шумоподавлением и настройками наушников vivo / iQOO TWS\n\n"
-        << "Использование:\n"
-        << "  kalm [--minimized] [-d <MAC|имя>]            Открыть графическое приложение (Qt 6 + Kirigami)\n"
-        << "  kalm status [--json] [-d <MAC|имя>]          Показать заряд, режим и статус наушников\n"
-        << "  kalm anc [--notify] [-d <MAC|имя>]           Включить активное шумоподавление (ANC)\n"
-        << "  kalm trans [--notify] [-d <MAC|имя>]         Включить режим прозрачности\n"
-        << "  kalm off [--notify] [-d <MAC|имя>]           Выключить шумоподавление\n"
-        << "  kalm toggle [--modes a,b] [--notify]         Циклически переключить режим\n"
+    out << "Kalm — " << kalm::trKey("app_subtitle") << "\n\n"
+        << "  kalm [--minimized] [--lang <en|ru>] [-d <MAC|name>]\n"
+        << "  kalm status [--json] [-d <MAC|name>]\n"
+        << "  kalm anc [adaptive|mild|standard|deep|plane|metro|bus] [--notify]\n"
+        << "  kalm trans [standard|voice] [--notify]\n"
+        << "  kalm off [--notify]\n"
+        << "  kalm toggle [--modes anc,trans,off] [--notify]\n"
         << "  kalm eq <standard|vocal|bass|treble|audiobook|master>\n"
         << "  kalm game <on|off>\n"
-        << "  kalm devices [list|scan|add <MAC> [--alias <имя>]|use <цель>|rename <цель> <имя>|remove <цель>]\n";
+        << "  kalm devices [list|scan|add <MAC> [--alias <name>]|use <target>|rename <target> <name>|remove <target>]\n";
 }
 
-int launchGui(const QString& targetDevice, bool startMinimized, int argc, char** argv) {
+int launchGui(const QString& targetDevice, bool startMinimized, const QString& langOverride, int argc, char** argv) {
     if (targetDevice.isEmpty()) {
         const auto existing = kalm::ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("show")}}, 500);
         if (existing && existing->value(QStringLiteral("ok")).toBool()) {
@@ -174,10 +207,12 @@ int launchGui(const QString& targetDevice, bool startMinimized, int argc, char**
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Kalm"));
     app.setApplicationDisplayName(QStringLiteral("Kalm"));
-    app.setApplicationVersion(QStringLiteral("0.1.0"));
+    app.setApplicationVersion(QStringLiteral("0.2.0"));
     app.setDesktopFileName(QStringLiteral("io.github.kalm"));
     app.setQuitOnLastWindowClosed(false);
     app.setWindowIcon(kalm::makeKalmIcon(false, std::nullopt));
+
+    kalm::initI18n(langOverride);
 
     kalm::DeviceRegistry registry;
     registry.ensureInitialImport();
@@ -214,10 +249,11 @@ int launchGui(const QString& targetDevice, bool startMinimized, int argc, char**
     session.start();
 
     QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("i18n"), kalm::i18nVariantMap());
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
-        std::cerr << "Ошибка загрузки интерфейса Kirigami QML.\n";
+        std::cerr << "Failed to load Kirigami QML interface.\n";
         return 1;
     }
 
@@ -253,19 +289,19 @@ int handleDevicesSubcmd(const QStringList& rest) {
     if (action == u"list") {
         const auto devs = reg.devices();
         if (devs.isEmpty()) {
-            out << "Сохранённых наушников пока нет. Используйте: kalm devices scan / kalm devices add <MAC>\n";
+            out << kalm::trKey("cli_no_saved") << "\n";
             return 0;
         }
         QMap<QString, kalm::BluezDevice> bluez;
         for (const auto& b : kalm::listBluezDevices(false, false)) bluez.insert(b.mac, b);
         const QString actMac = reg.activeMac();
-        out << "Сохранённые наушники:\n";
+        out << kalm::trKey("cli_saved_header") << "\n";
         for (const auto& d : devs) {
             const QString mark = (d.mac == actMac) ? QStringLiteral("★") : QStringLiteral(" ");
             const bool hasB = bluez.contains(d.mac);
             const QString btStatus = (hasB && bluez[d.mac].connected)
-                                         ? QStringLiteral("Подключено")
-                                         : (hasB ? QStringLiteral("Сопряжено") : QStringLiteral("Не найдено в BT"));
+                                         ? kalm::trKey("status_connected")
+                                         : (hasB ? kalm::trKey("status_paired") : kalm::trKey("status_not_in_bt"));
             const QString aliasNote =
                 (!d.alias.isEmpty() && d.alias != d.name) ? QStringLiteral(" [%1]").arg(d.name) : QString{};
             out << "  " << mark << " " << d.displayName() << aliasNote << " — " << d.mac << " (" << btStatus << ")\n";
@@ -276,23 +312,23 @@ int handleDevicesSubcmd(const QStringList& rest) {
     if (action == u"scan") {
         const auto found = kalm::listBluezDevices(false, true);
         if (found.isEmpty()) {
-            out << "Аудиоустройства Bluetooth не найдены.\n";
+            out << kalm::trKey("cli_no_bt") << "\n";
             return 0;
         }
         QSet<QString> saved;
         for (const auto& s : reg.devices()) saved.insert(s.mac);
-        out << "Доступные аудиоустройства Bluetooth:\n";
+        out << kalm::trKey("cli_bt_header") << "\n";
         for (const auto& b : found) {
             const QString tag = b.isVivoTws() ? QStringLiteral("vivo/iQOO GAIA") : QStringLiteral("Bluetooth Audio");
-            const QString conn = b.connected ? QStringLiteral("Подключено") : QStringLiteral("Не подключено");
-            const QString sv = saved.contains(b.mac) ? QStringLiteral(" [уже добавлено]") : QString{};
+            const QString conn = b.connected ? kalm::trKey("status_connected") : kalm::trKey("status_disconnected");
+            const QString sv = saved.contains(b.mac) ? QStringLiteral(" [%1]").arg(kalm::trKey("status_in_list")) : QString{};
             out << "  • " << b.name << " — " << b.mac << " (" << tag << ", " << conn << ")" << sv << "\n";
         }
         return 0;
     }
 
     if (action == u"add") {
-        if (rest.size() < 2) throw std::runtime_error("Укажите MAC-адрес: kalm devices add <MAC> [--alias <имя>]");
+        if (rest.size() < 2) throw std::runtime_error("Usage: kalm devices add <MAC> [--alias <name>]");
         const QString mac = rest[1];
         QString alias;
         for (qsizetype i = 2; i < rest.size(); ++i) {
@@ -303,45 +339,45 @@ int handleDevicesSubcmd(const QStringList& rest) {
         const auto bdev = kalm::findBluezByMac(mac);
         const auto entry = reg.add(mac, bdev ? bdev->name : mac.toUpper(), alias, true);
         kalm::ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("reload_registry")}});
-        out << "Добавлены и выбраны наушники: " << entry.displayName() << " (" << entry.mac << ")\n";
+        out << kalm::trKey("cli_added").arg(entry.displayName(), entry.mac) << "\n";
         return 0;
     }
 
     if (action == u"remove") {
-        if (rest.size() < 2) throw std::runtime_error("Укажите цель: kalm devices remove <MAC|имя>");
+        if (rest.size() < 2) throw std::runtime_error("Usage: kalm devices remove <MAC|name>");
         const auto target = reg.resolveQuery(rest[1]);
         if (!target || !reg.remove(target->mac)) {
-            throw std::runtime_error(QStringLiteral("Наушники '%1' не найдены в списке.").arg(rest[1]).toStdString());
+            throw std::runtime_error(kalm::trKey("err_device_not_saved").arg(rest[1]).toStdString());
         }
         kalm::ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("reload_registry")}});
-        out << "Удалено: " << target->displayName() << " (" << target->mac << ")\n";
+        out << kalm::trKey("cli_removed").arg(target->displayName(), target->mac) << "\n";
         return 0;
     }
 
     if (action == u"use") {
-        if (rest.size() < 2) throw std::runtime_error("Укажите цель: kalm devices use <MAC|имя>");
+        if (rest.size() < 2) throw std::runtime_error("Usage: kalm devices use <MAC|name>");
         const auto target = reg.resolveQuery(rest[1]);
         if (!target || !reg.setActive(target->mac)) {
-            throw std::runtime_error(QStringLiteral("Наушники '%1' не найдены в списке.").arg(rest[1]).toStdString());
+            throw std::runtime_error(kalm::trKey("err_device_not_saved").arg(rest[1]).toStdString());
         }
         kalm::ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("select_device")},
                                      {QStringLiteral("mac"), target->mac}});
-        out << "Активные наушники: " << target->displayName() << " (" << target->mac << ")\n";
+        out << kalm::trKey("cli_active").arg(target->displayName(), target->mac) << "\n";
         return 0;
     }
 
     if (action == u"rename") {
-        if (rest.size() < 3) throw std::runtime_error("Укажите цель и новое имя: kalm devices rename <MAC|имя> <новое_имя>");
+        if (rest.size() < 3) throw std::runtime_error("Usage: kalm devices rename <MAC|name> <new_name>");
         const auto target = reg.resolveQuery(rest[1]);
         if (!target || !reg.rename(target->mac, rest[2])) {
-            throw std::runtime_error(QStringLiteral("Наушники '%1' не найдены в списке.").arg(rest[1]).toStdString());
+            throw std::runtime_error(kalm::trKey("err_device_not_saved").arg(rest[1]).toStdString());
         }
         kalm::ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("reload_registry")}});
-        out << "Переименовано: " << (rest[2].isEmpty() ? target->name : rest[2]) << " (" << target->mac << ")\n";
+        out << kalm::trKey("cli_renamed").arg(rest[2].isEmpty() ? target->name : rest[2], target->mac) << "\n";
         return 0;
     }
 
-    throw std::runtime_error(QStringLiteral("Неизвестное действие devices: %1").arg(action).toStdString());
+    throw std::runtime_error(QStringLiteral("Unknown devices action: %1").arg(action).toStdString());
 }
 
 }  // namespace
@@ -353,6 +389,9 @@ int main(int argc, char** argv) {
     bool startMinimized = false;
     bool jsonOut = false;
     bool notify = false;
+    bool wantHelp = false;
+    bool wantVersion = false;
+    QString langOverride;
     QString deviceQuery;
     QString modesCsv = QStringLiteral("anc,trans,off");
     QStringList positional;
@@ -360,19 +399,17 @@ int main(int argc, char** argv) {
     for (qsizetype i = 0; i < rawArgs.size(); ++i) {
         const QString& a = rawArgs[i];
         if (a == u"-h" || a == u"--help") {
-            printHelp();
-            return 0;
-        }
-        if (a == u"-v" || a == u"--version") {
-            std::cout << "kalm 0.1.0\n";
-            return 0;
-        }
-        if (a == u"--minimized") {
+            wantHelp = true;
+        } else if (a == u"-v" || a == u"--version") {
+            wantVersion = true;
+        } else if (a == u"--minimized") {
             startMinimized = true;
         } else if (a == u"--json") {
             jsonOut = true;
         } else if (a == u"--notify") {
             notify = true;
+        } else if (a == u"--lang" && i + 1 < rawArgs.size()) {
+            langOverride = rawArgs[++i];
         } else if ((a == u"-d" || a == u"--device" || a == u"--mac") && i + 1 < rawArgs.size()) {
             deviceQuery = rawArgs[++i];
         } else if (a == u"--modes" && i + 1 < rawArgs.size()) {
@@ -382,13 +419,25 @@ int main(int argc, char** argv) {
         }
     }
 
-    const QString subcmd = positional.isEmpty() ? QStringLiteral("gui") : positional.first();
-    if (subcmd == u"gui") {
-        return launchGui(deviceQuery, startMinimized, argc, argv);
+    if (wantVersion) {
+        std::cout << "kalm 0.2.0\n";
+        return 0;
     }
 
-    // Lightweight QCoreApplication for CLI D-Bus / SDP operations
+    const QString subcmd = (!wantHelp && positional.isEmpty()) ? QStringLiteral("gui")
+                                                               : (positional.isEmpty() ? QString{} : positional.first());
+    if (!wantHelp && subcmd == u"gui") {
+        return launchGui(deviceQuery, startMinimized, langOverride, argc, argv);
+    }
+
     QCoreApplication coreApp(argc, argv);
+    kalm::initI18n(langOverride);
+
+    if (wantHelp) {
+        printHelp();
+        return 0;
+    }
+
     QTextStream out(stdout);
     QTextStream err(stderr);
 
@@ -424,27 +473,55 @@ int main(int argc, char** argv) {
             const auto mode = kalm::parseNoiseModeStr(rawTarget);
             if (!mode) {
                 throw std::runtime_error(
-                    QStringLiteral("Неизвестный режим '%1'. Доступны: anc, trans, off").arg(rawTarget).toStdString());
+                    QStringLiteral("Unknown mode '%1'. Available: anc, trans, off").arg(rawTarget).toStdString());
             }
+
+            std::optional<int> ancLvl;
+            std::optional<int> transEff;
+            const qsizetype subArgIdx = (subcmd == u"mode") ? 2 : 1;
+            if (positional.size() > subArgIdx) {
+                const QString extra = positional[subArgIdx];
+                if (*mode == kalm::NoiseMode::Anc) {
+                    ancLvl = kalm::parseAncLevelStr(extra);
+                    if (!ancLvl) {
+                        throw std::runtime_error(
+                            QStringLiteral("Unknown ANC level '%1'. Available: adaptive, mild, standard, deep, plane, metro, bus")
+                                .arg(extra)
+                                .toStdString());
+                    }
+                } else if (*mode == kalm::NoiseMode::Transparency) {
+                    transEff = kalm::parseTransparencyStr(extra);
+                    if (!transEff) {
+                        throw std::runtime_error(
+                            QStringLiteral("Unknown transparency mode '%1'. Available: standard, voice")
+                                .arg(extra)
+                                .toStdString());
+                    }
+                }
+            }
+
+            QJsonObject reqObj{{QStringLiteral("cmd"), QStringLiteral("set_noise")},
+                               {QStringLiteral("mode"), kalm::noiseModeSlug(*mode)}};
+            if (ancLvl) reqObj.insert(QStringLiteral("anc_level"), *ancLvl);
+            if (transEff) reqObj.insert(QStringLiteral("trans_effect"), *transEff);
+
             QJsonObject state;
-            const auto ipc = deviceQuery.isEmpty()
-                                 ? kalm::ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("set_noise")},
-                                                                {QStringLiteral("mode"), kalm::noiseModeSlug(*mode)}})
-                                 : std::nullopt;
+            const auto ipc = deviceQuery.isEmpty() ? kalm::ipcRequest(reqObj) : std::nullopt;
             if (ipc) {
                 if (!ipc->value(QStringLiteral("ok")).toBool()) {
                     throw std::runtime_error(ipc->value(QStringLiteral("error")).toString().toStdString());
                 }
                 state = ipc->value(QStringLiteral("state")).toObject();
             } else {
-                state = kalm::oneshotSetNoise(reg, *mode, deviceQuery);
+                state = kalm::oneshotSetNoise(reg, *mode, ancLvl, transEff, deviceQuery);
             }
-            const QString label = state.value(QStringLiteral("noise_mode_label")).toString(kalm::noiseModeLabelRu(*mode));
-            out << "Режим установлен: " << label << "\n";
+            const QString label = state.value(QStringLiteral("noise_mode_label")).toString(kalm::noiseModeLabel(*mode));
+            out << kalm::trKey("cli_mode_set").arg(label) << "\n";
             if (notify) {
                 const QString summary = battSummaryShort(state);
-                notifyDesktop(QStringLiteral("Режим: %1").arg(label),
-                              summary.isEmpty() ? state.value(QStringLiteral("device_name")).toString(QStringLiteral("Kalm")) : summary);
+                notifyDesktop(kalm::trKey("cli_notify_mode").arg(label),
+                              summary.isEmpty() ? state.value(QStringLiteral("device_name")).toString(QStringLiteral("Kalm"))
+                                                : summary);
             }
             return 0;
         }
@@ -455,13 +532,13 @@ int main(int argc, char** argv) {
             for (const QString& tok : modesCsv.split(u',', Qt::SkipEmptyParts)) {
                 const auto m = kalm::parseNoiseModeStr(tok);
                 if (!m) {
-                    throw std::runtime_error(QStringLiteral("Неизвестный режим '%1'").arg(tok).toStdString());
+                    throw std::runtime_error(QStringLiteral("Unknown mode '%1'").arg(tok).toStdString());
                 }
                 modesList.append(*m);
                 modesJson.append(kalm::noiseModeSlug(*m));
             }
             if (modesList.size() < 2) {
-                throw std::runtime_error("Укажите минимум 2 режима для toggle (например --modes anc,trans)");
+                throw std::runtime_error("Specify at least 2 modes for toggle (e.g. --modes anc,trans)");
             }
             QJsonObject state;
             const auto ipc = deviceQuery.isEmpty()
@@ -477,23 +554,24 @@ int main(int argc, char** argv) {
                 state = kalm::oneshotToggleNoise(reg, modesList, deviceQuery);
             }
             const QString label = state.value(QStringLiteral("noise_mode_label")).toString(QStringLiteral("—"));
-            out << "Режим переключён: " << label << "\n";
+            out << kalm::trKey("cli_mode_toggled").arg(label) << "\n";
             if (notify) {
                 const QString summary = battSummaryShort(state);
-                notifyDesktop(QStringLiteral("Режим: %1").arg(label),
-                              summary.isEmpty() ? state.value(QStringLiteral("device_name")).toString(QStringLiteral("Kalm")) : summary);
+                notifyDesktop(kalm::trKey("cli_notify_mode").arg(label),
+                              summary.isEmpty() ? state.value(QStringLiteral("device_name")).toString(QStringLiteral("Kalm"))
+                                                : summary);
             }
             return 0;
         }
 
         if (subcmd == u"eq") {
             if (positional.size() < 2) {
-                throw std::runtime_error("Укажите пресет: standard | vocal | bass | treble | audiobook | master");
+                throw std::runtime_error("Usage: kalm eq <standard|vocal|bass|treble|audiobook|master>");
             }
             const auto eff = parseEqPreset(positional[1]);
             if (!eff) {
                 throw std::runtime_error(
-                    QStringLiteral("Неизвестный пресет '%1'. Доступны: standard, vocal, bass, treble, audiobook, master")
+                    QStringLiteral("Unknown preset '%1'. Available: standard, vocal, bass, treble, audiobook, master")
                         .arg(positional[1])
                         .toStdString());
             }
@@ -504,13 +582,13 @@ int main(int argc, char** argv) {
             if (!ipc || !ipc->value(QStringLiteral("ok")).toBool()) {
                 kalm::oneshotSetEq(reg, *eff, deviceQuery);
             }
-            out << "Эквалайзер: " << kalm::audioEffectLabel(*eff) << "\n";
+            out << kalm::trKey("cli_sound") << " " << kalm::audioEffectLabel(*eff) << "\n";
             return 0;
         }
 
         if (subcmd == u"game") {
             if (positional.size() < 2 || (positional[1] != u"on" && positional[1] != u"off")) {
-                throw std::runtime_error("Укажите состояние: kalm game on | off");
+                throw std::runtime_error("Usage: kalm game <on|off>");
             }
             const bool en = (positional[1] == u"on");
             const auto ipc = deviceQuery.isEmpty()
@@ -520,13 +598,13 @@ int main(int argc, char** argv) {
             if (!ipc || !ipc->value(QStringLiteral("ok")).toBool()) {
                 kalm::oneshotSetGame(reg, en, deviceQuery);
             }
-            out << "Игровой режим: " << (en ? QStringLiteral("Включён") : QStringLiteral("Выключен")) << "\n";
+            out << kalm::trKey("cli_game") << " " << (en ? kalm::trKey("cli_enabled") : kalm::trKey("cli_disabled")) << "\n";
             return 0;
         }
 
-        throw std::runtime_error(QStringLiteral("Неизвестная команда '%1'. См. kalm --help").arg(subcmd).toStdString());
+        throw std::runtime_error(QStringLiteral("Unknown command '%1'. See kalm --help").arg(subcmd).toStdString());
     } catch (const std::exception& ex) {
-        err << "Ошибка: " << QString::fromUtf8(ex.what()) << "\n";
+        err << kalm::trKey("Error") << ": " << QString::fromUtf8(ex.what()) << "\n";
         return 1;
     }
 }

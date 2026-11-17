@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "transport.hpp"
 
+#include "i18n.hpp"
 #include "protocol.hpp"
 
 #include <QCoreApplication>
@@ -425,11 +426,7 @@ RfcommConnection openGaiaRfcomm(const QString& mac, const QString& devPath,
     }
 
     const QString title = name.isEmpty() ? normMac : QStringLiteral("%1 (%2)").arg(name, normMac);
-    throw std::runtime_error(
-        QStringLiteral("Не удалось открыть канал GAIA с наушниками %1. "
-                       "Убедитесь, что они подключены по Bluetooth и вынуты из закрытого кейса.")
-            .arg(title)
-            .toStdString());
+    throw std::runtime_error(trKey("err_gaia_open").arg(title).toStdString());
 }
 
 }  // namespace kalm

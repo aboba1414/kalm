@@ -32,6 +32,11 @@ class KalmBackend : public QObject {
     Q_PROPERTY(QString statusSummary READ statusSummary NOTIFY stateChanged)
     Q_PROPERTY(int noiseModeIndex READ noiseModeIndex NOTIFY stateChanged)
 
+    Q_PROPERTY(QVariantList ancLevelModel READ ancLevelModel CONSTANT)
+    Q_PROPERTY(int ancLevelIndex READ ancLevelIndex NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList transEffectModel READ transEffectModel CONSTANT)
+    Q_PROPERTY(int transEffectIndex READ transEffectIndex NOTIFY stateChanged)
+
     Q_PROPERTY(QString leftBatteryText READ leftBatteryText NOTIFY stateChanged)
     Q_PROPERTY(QString leftBatterySub READ leftBatterySub NOTIFY stateChanged)
     Q_PROPERTY(QString rightBatteryText READ rightBatteryText NOTIFY stateChanged)
@@ -61,7 +66,6 @@ public:
 
     void bindWindow(QWindow* win);
 
-    // Thread-safe pushers from background workers
     void pushStateFromWorker(const EarbudState& st);
     void pushDevicesRefreshFromWorker();
     void pushErrorFromWorker(const QString& msg);
@@ -74,6 +78,11 @@ public:
     QString firmware() const { return m_state.firmware; }
     QString statusSummary() const;
     int noiseModeIndex() const;
+
+    QVariantList ancLevelModel() const { return m_ancLevelModel; }
+    int ancLevelIndex() const;
+    QVariantList transEffectModel() const { return m_transEffectModel; }
+    int transEffectIndex() const;
 
     QString leftBatteryText() const;
     QString leftBatterySub() const;
@@ -102,6 +111,8 @@ public:
 public Q_SLOTS:
     void refreshSavedDevicesAsync();
     void setNoiseByIndex(int index);
+    void setAncLevelByIndex(int index);
+    void setTransEffectByIndex(int index);
     void setEqByIndex(int index);
     void setCycleByIndex(int index);
     void setGameMode(bool enabled);
@@ -137,6 +148,8 @@ private:
     KalmSession& m_session;
     DeviceRegistry& m_registry;
     EarbudState m_state;
+    QVariantList m_ancLevelModel;
+    QVariantList m_transEffectModel;
     QVariantList m_eqModel;
     QVariantList m_cycleModel;
     QVariantList m_savedList;
@@ -173,6 +186,8 @@ private:
     QAction* m_actAnc = nullptr;
     QAction* m_actTrans = nullptr;
     QAction* m_actOff = nullptr;
+    QMenu* m_ancLevelMenu = nullptr;
+    QMap<int, QAction*> m_ancLevelActions;
     QMenu* m_devsMenu = nullptr;
     QActionGroup* m_devsGroup = nullptr;
     QMap<int, QAction*> m_eqActions;

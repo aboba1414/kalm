@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "protocol.hpp"
 
+#include "i18n.hpp"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
@@ -77,11 +79,11 @@ std::optional<QJsonObject> parseTelemetryPayload(const QByteArray& payload) {
 
 }  // namespace
 
-QString noiseModeLabelRu(NoiseMode mode) {
+QString noiseModeLabel(NoiseMode mode) {
     switch (mode) {
-        case NoiseMode::Anc: return QStringLiteral("Шумоподавление");
-        case NoiseMode::Off: return QStringLiteral("Выключено");
-        case NoiseMode::Transparency: return QStringLiteral("Прозрачность");
+        case NoiseMode::Anc: return trKey("mode_anc");
+        case NoiseMode::Off: return trKey("mode_off");
+        case NoiseMode::Transparency: return trKey("mode_trans");
     }
     return QStringLiteral("—");
 }
@@ -111,38 +113,129 @@ std::optional<NoiseMode> parseNoiseModeStr(const QString& text) {
     return std::nullopt;
 }
 
+const std::vector<PresetEntry>& ancLevelPresets() {
+    static const std::vector<PresetEntry> kList = {
+        {3, "anc_adaptive", "adaptive"},
+        {1, "anc_mild", "mild"},
+        {0, "anc_standard", "standard"},
+        {2, "anc_deep", "deep"},
+        {5, "anc_plane", "plane"},
+        {6, "anc_metro", "metro"},
+        {7, "anc_bus", "bus"},
+    };
+    return kList;
+}
+
+QString ancLevelLabel(int code) {
+    for (const auto& p : ancLevelPresets()) {
+        if (p.code == code) return trKey(p.trKeyName);
+    }
+    return {};
+}
+
+QString ancLevelSlug(int code) {
+    for (const auto& p : ancLevelPresets()) {
+        if (p.code == code) return QString::fromLatin1(p.slug);
+    }
+    return {};
+}
+
+std::optional<int> parseAncLevelStr(const QString& text) {
+    const QString k = text.trimmed().toLower();
+    if (k == u"adaptive" || k == u"auto" || k == u"smart" || k == u"3" ||
+        k == u"адаптив" || k == u"адаптивное" || k == u"адаптивная") {
+        return 3;
+    }
+    if (k == u"mild" || k == u"low" || k == u"light" || k == u"1" ||
+        k == u"слабое" || k == u"легкое" || k == u"лёгкое") {
+        return 1;
+    }
+    if (k == u"standard" || k == u"medium" || k == u"normal" || k == u"0" ||
+        k == u"стандарт" || k == u"стандартное" || k == u"среднее") {
+        return 0;
+    }
+    if (k == u"deep" || k == u"high" || k == u"strong" || k == u"max" || k == u"2" ||
+        k == u"сильное" || k == u"глубокое") {
+        return 2;
+    }
+    if (k == u"plane" || k == u"airplane" || k == u"5" || k == u"самолет" || k == u"самолёт") {
+        return 5;
+    }
+    if (k == u"metro" || k == u"subway" || k == u"train" || k == u"6" || k == u"метро") {
+        return 6;
+    }
+    if (k == u"bus" || k == u"transit" || k == u"7" || k == u"автобус" || k == u"транспорт") {
+        return 7;
+    }
+    return std::nullopt;
+}
+
+const std::vector<PresetEntry>& transparencyPresets() {
+    static const std::vector<PresetEntry> kList = {
+        {1, "trans_standard", "standard"},
+        {2, "trans_voice", "voice"},
+    };
+    return kList;
+}
+
+QString transparencyLabel(int code) {
+    for (const auto& p : transparencyPresets()) {
+        if (p.code == code) return trKey(p.trKeyName);
+    }
+    return {};
+}
+
+QString transparencySlug(int code) {
+    for (const auto& p : transparencyPresets()) {
+        if (p.code == code) return QString::fromLatin1(p.slug);
+    }
+    return {};
+}
+
+std::optional<int> parseTransparencyStr(const QString& text) {
+    const QString k = text.trimmed().toLower();
+    if (k == u"standard" || k == u"normal" || k == u"1" || k == u"стандарт" || k == u"стандартная") {
+        return 1;
+    }
+    if (k == u"voice" || k == u"vocal" || k == u"speech" || k == u"2" ||
+        k == u"голос" || k == u"вокал") {
+        return 2;
+    }
+    return std::nullopt;
+}
+
 const std::vector<PresetEntry>& audioEffectPresets() {
     static const std::vector<PresetEntry> kList = {
-        {0x00, "Стандартный"},
-        {0x01, "Чистый вокал"},
-        {0x02, "Мегабас"},
-        {0x03, "Чистые высокие"},
-        {0x05, "Аудиокниги"},
-        {0x0B, "Мастер звука (Hi-Fi)"},
+        {0x00, "eq_standard", "standard"},
+        {0x01, "eq_vocal", "vocal"},
+        {0x02, "eq_bass", "bass"},
+        {0x03, "eq_treble", "treble"},
+        {0x05, "eq_audiobook", "audiobook"},
+        {0x0B, "eq_master", "master"},
     };
     return kList;
 }
 
 QString audioEffectLabel(int code) {
     for (const auto& p : audioEffectPresets()) {
-        if (p.code == code) return QString::fromUtf8(p.label);
+        if (p.code == code) return trKey(p.trKeyName);
     }
     return {};
 }
 
 const std::vector<PresetEntry>& noiseCyclePresets() {
     static const std::vector<PresetEntry> kList = {
-        {0x0B, "Шумодав + Прозрачность + Выкл"},
-        {0x0A, "Шумодав + Прозрачность"},
-        {0x08, "Шумодав + Выкл"},
-        {0x09, "Прозрачность + Выкл"},
+        {0x0B, "cycle_all", "all"},
+        {0x0A, "cycle_anc_trans", "anc_trans"},
+        {0x08, "cycle_anc_off", "anc_off"},
+        {0x09, "cycle_trans_off", "trans_off"},
     };
     return kList;
 }
 
 QString noiseCycleLabel(int code) {
     for (const auto& p : noiseCyclePresets()) {
-        if (p.code == code) return QString::fromUtf8(p.label);
+        if (p.code == code) return trKey(p.trKeyName);
     }
     return {};
 }
@@ -169,10 +262,10 @@ QString MultiConnectDevice::macStr() const {
     return parts.join(u':');
 }
 
-QString MultiConnectDevice::statusRu() const {
-    if (status == 2) return QStringLiteral("Подключено (активно)");
-    if (status == 1) return QStringLiteral("Подключено");
-    return QStringLiteral("Отключено");
+QString MultiConnectDevice::statusLabel() const {
+    if (status == 2) return trKey("mp_connected_active");
+    if (status == 1) return trKey("mp_connected");
+    return trKey("mp_disconnected");
 }
 
 QJsonObject EarbudState::toJson() const {
@@ -213,10 +306,22 @@ QJsonObject EarbudState::toJson() const {
             {QStringLiteral("mac"), d.macStr()},
             {QStringLiteral("name"), d.name},
             {QStringLiteral("status"), static_cast<int>(d.status)},
-            {QStringLiteral("status_label"), d.statusRu()},
+            {QStringLiteral("status_label"), d.statusLabel()},
             {QStringLiteral("connected"), d.connected()},
             {QStringLiteral("active"), d.active()},
         });
+    }
+
+    QString fullModeLabel;
+    if (noiseMode) {
+        fullModeLabel = noiseModeLabel(*noiseMode);
+        if (*noiseMode == NoiseMode::Anc && noiseEffect) {
+            const QString sub = ancLevelLabel(*noiseEffect);
+            if (!sub.isEmpty()) fullModeLabel += QStringLiteral(" (%1)").arg(sub);
+        } else if (*noiseMode == NoiseMode::Transparency && transparencyEffect) {
+            const QString sub = transparencyLabel(*transparencyEffect);
+            if (!sub.isEmpty()) fullModeLabel += QStringLiteral(" (%1)").arg(sub);
+        }
     }
 
     return QJsonObject{
@@ -225,7 +330,13 @@ QJsonObject EarbudState::toJson() const {
         {QStringLiteral("device_mac"), deviceMac},
         {QStringLiteral("firmware"), firmware.isEmpty() ? QJsonValue() : QJsonValue(firmware)},
         {QStringLiteral("noise_mode"), noiseMode ? QJsonValue(noiseModeSlug(*noiseMode)) : QJsonValue()},
-        {QStringLiteral("noise_mode_label"), noiseMode ? QJsonValue(noiseModeLabelRu(*noiseMode)) : QJsonValue()},
+        {QStringLiteral("noise_mode_label"), fullModeLabel.isEmpty() ? QJsonValue() : QJsonValue(fullModeLabel)},
+        {QStringLiteral("anc_level"), optInt(noiseEffect)},
+        {QStringLiteral("anc_level_slug"), noiseEffect ? QJsonValue(ancLevelSlug(*noiseEffect)) : QJsonValue()},
+        {QStringLiteral("anc_level_label"), noiseEffect ? QJsonValue(ancLevelLabel(*noiseEffect)) : QJsonValue()},
+        {QStringLiteral("transparency_effect"), optInt(transparencyEffect)},
+        {QStringLiteral("transparency_effect_slug"), transparencyEffect ? QJsonValue(transparencySlug(*transparencyEffect)) : QJsonValue()},
+        {QStringLiteral("transparency_effect_label"), transparencyEffect ? QJsonValue(transparencyLabel(*transparencyEffect)) : QJsonValue()},
         {QStringLiteral("battery"), batt},
         {QStringLiteral("wear"), wear},
         {QStringLiteral("audio_effect"), optInt(audioEffect)},
@@ -343,10 +454,19 @@ QByteArray buildQueryNoiseMode(const WireProfile& profile) {
     return encodeFrame(profile.gaiaVersion, kVivoVendor, kCmdQueryNoiseMode, profile.noiseQueryPayload);
 }
 
-QByteArray buildSetNoiseMode(NoiseMode mode, const WireProfile& profile) {
+QByteArray buildSetNoiseMode(NoiseMode mode, const WireProfile& profile,
+                             std::optional<int> ancLevel,
+                             std::optional<int> transEffect) {
     QByteArray p;
     p.append(static_cast<char>(static_cast<uint8_t>(mode)));
-    p.append(profile.noiseSetSuffix);
+    QByteArray suffix = profile.noiseSetSuffix;
+    if (suffix.size() >= 2) {
+        if (ancLevel.has_value()) suffix[0] = static_cast<char>(*ancLevel & 0xFF);
+        if (transEffect.has_value()) suffix[1] = static_cast<char>(*transEffect & 0xFF);
+    } else if (suffix.size() == 1 && ancLevel.has_value()) {
+        suffix[0] = static_cast<char>(*ancLevel & 0xFF);
+    }
+    p.append(suffix);
     return encodeFrame(profile.gaiaVersion, kVivoVendor, kCmdSetNoiseMode, p);
 }
 
@@ -441,8 +561,8 @@ QString applyFrameToState(const Frame& frame, EarbudState& state) {
             const uint8_t m = static_cast<uint8_t>(p[1]);
             if (m <= 2) {
                 state.noiseMode = static_cast<NoiseMode>(m);
-                if (p.size() > 2) state.noiseEffect = static_cast<uint8_t>(p[2]);
-                if (p.size() > 3) state.transparencyEffect = static_cast<uint8_t>(p[3]);
+                if (p.size() > 2) state.noiseEffect = static_cast<int>(static_cast<uint8_t>(p[2]));
+                if (p.size() > 3) state.transparencyEffect = static_cast<int>(static_cast<uint8_t>(p[3]));
                 return QStringLiteral("noise_mode");
             }
         }

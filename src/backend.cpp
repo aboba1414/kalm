@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "backend.hpp"
 
+#include "i18n.hpp"
 #include "transport.hpp"
 
 #include <QApplication>
@@ -21,10 +22,10 @@ namespace kalm {
 
 namespace {
 
-QString wearLabelRu(const QString& wear) {
-    if (wear == u"worn") return QStringLiteral("В ухе");
-    if (wear == u"in_case") return QStringLiteral("В кейсе");
-    if (wear == u"removed") return QStringLiteral("Снят");
+QString wearLabel(const QString& wear) {
+    if (wear == u"worn") return trKey("wear_worn");
+    if (wear == u"in_case") return trKey("wear_in_case");
+    if (wear == u"removed") return trKey("wear_removed");
     return {};
 }
 
@@ -101,15 +102,27 @@ KalmBackend::KalmBackend(KalmSession& session, DeviceRegistry& registry, QObject
       m_session(session),
       m_registry(registry),
       m_state(session.snapshot()) {
+    for (const auto& a : ancLevelPresets()) {
+        m_ancLevelModel.append(QVariantMap{
+            {QStringLiteral("text"), trKey(a.trKeyName)},
+            {QStringLiteral("value"), a.code},
+        });
+    }
+    for (const auto& t : transparencyPresets()) {
+        m_transEffectModel.append(QVariantMap{
+            {QStringLiteral("text"), trKey(t.trKeyName)},
+            {QStringLiteral("value"), t.code},
+        });
+    }
     for (const auto& e : audioEffectPresets()) {
         m_eqModel.append(QVariantMap{
-            {QStringLiteral("text"), QString::fromUtf8(e.label)},
+            {QStringLiteral("text"), trKey(e.trKeyName)},
             {QStringLiteral("value"), e.code},
         });
     }
     for (const auto& c : noiseCyclePresets()) {
         m_cycleModel.append(QVariantMap{
-            {QStringLiteral("text"), QString::fromUtf8(c.label)},
+            {QStringLiteral("text"), trKey(c.trKeyName)},
             {QStringLiteral("value"), c.code},
         });
     }
@@ -164,15 +177,15 @@ QString KalmBackend::deviceName() const {
 
 QString KalmBackend::statusSummary() const {
     if (m_state.connected) {
-        QStringList parts{QStringLiteral("Подключено")};
+        QStringList parts{trKey("status_connected")};
         if (!m_state.firmware.isEmpty()) parts.append(QStringLiteral("FW %1").arg(m_state.firmware));
         if (!m_state.deviceMac.isEmpty()) parts.append(m_state.deviceMac);
         return parts.join(QStringLiteral(" · "));
     }
     if (!m_state.deviceMac.isEmpty()) {
-        return QStringLiteral("Не подключено · %1").arg(m_state.deviceMac);
+        return QStringLiteral("%1 · %2").arg(trKey("status_disconnected"), m_state.deviceMac);
     }
-    return QStringLiteral("Добавьте или выберите наушники");
+    return trKey("status_add_or_select");
 }
 
 int KalmBackend::noiseModeIndex() const {
@@ -180,27 +193,45 @@ int KalmBackend::noiseModeIndex() const {
     return static_cast<int>(static_cast<uint8_t>(*m_state.noiseMode));
 }
 
+int KalmBackend::ancLevelIndex() const {
+    const int cur = m_state.noiseEffect.value_or(3);
+    const auto& list = ancLevelPresets();
+    for (size_t i = 0; i < list.size(); ++i) {
+        if (list[i].code == cur) return static_cast<int>(i);
+    }
+    return 0;
+}
+
+int KalmBackend::transEffectIndex() const {
+    const int cur = m_state.transparencyEffect.value_or(1);
+    const auto& list = transparencyPresets();
+    for (size_t i = 0; i < list.size(); ++i) {
+        if (list[i].code == cur) return static_cast<int>(i);
+    }
+    return 0;
+}
+
 QString KalmBackend::leftBatteryText() const { return formatBattValue(m_state.leftBattery); }
 
 QString KalmBackend::leftBatterySub() const {
-    const QString w = wearLabelRu(m_state.leftWear);
-    return w.isEmpty() ? QStringLiteral("Левый наушник") : QStringLiteral("Левый · %1").arg(w);
+    const QString w = wearLabel(m_state.leftWear);
+    return w.isEmpty() ? trKey("batt_left_full") : QStringLiteral("%1 · %2").arg(trKey("batt_left"), w);
 }
 
 QString KalmBackend::rightBatteryText() const { return formatBattValue(m_state.rightBattery); }
 
 QString KalmBackend::rightBatterySub() const {
-    const QString w = wearLabelRu(m_state.rightWear);
-    return w.isEmpty() ? QStringLiteral("Правый наушник") : QStringLiteral("Правый · %1").arg(w);
+    const QString w = wearLabel(m_state.rightWear);
+    return w.isEmpty() ? trKey("batt_right_full") : QStringLiteral("%1 · %2").arg(trKey("batt_right"), w);
 }
 
 QString KalmBackend::caseBatteryText() const { return formatBattValue(m_state.caseBattery); }
 
 QString KalmBackend::caseBatterySub() const {
     if (m_state.caseBattery.level && m_state.caseBattery.stale) {
-        return QStringLiteral("Кейс (кэш)");
+        return trKey("batt_case_cached");
     }
-    return QStringLiteral("Зарядный кейс");
+    return trKey("batt_case_full");
 }
 
 int KalmBackend::eqIndex() const {
@@ -227,7 +258,7 @@ QVariantList KalmBackend::multipointDevices() const {
         out.append(QVariantMap{
             {QStringLiteral("mac"), d.macStr()},
             {QStringLiteral("name"), d.name.isEmpty() ? d.macStr() : d.name},
-            {QStringLiteral("statusText"), d.statusRu()},
+            {QStringLiteral("statusText"), d.statusLabel()},
             {QStringLiteral("connected"), d.connected()},
             {QStringLiteral("active"), d.active()},
         });
@@ -286,6 +317,26 @@ void KalmBackend::setNoiseByIndex(int index) {
     runBg([this, mode]() { m_session.setNoiseMode(mode); });
 }
 
+void KalmBackend::setAncLevelByIndex(int index) {
+    const auto& list = ancLevelPresets();
+    if (index < 0 || static_cast<size_t>(index) >= list.size()) return;
+    const int code = list[static_cast<size_t>(index)].code;
+    m_state.noiseMode = NoiseMode::Anc;
+    m_state.noiseEffect = code;
+    Q_EMIT stateChanged();
+    runBg([this, code]() { m_session.setAncLevel(code); });
+}
+
+void KalmBackend::setTransEffectByIndex(int index) {
+    const auto& list = transparencyPresets();
+    if (index < 0 || static_cast<size_t>(index) >= list.size()) return;
+    const int code = list[static_cast<size_t>(index)].code;
+    m_state.noiseMode = NoiseMode::Transparency;
+    m_state.transparencyEffect = code;
+    Q_EMIT stateChanged();
+    runBg([this, code]() { m_session.setTransparencyEffect(code); });
+}
+
 void KalmBackend::setEqByIndex(int index) {
     const auto& list = audioEffectPresets();
     if (index < 0 || static_cast<size_t>(index) >= list.size()) return;
@@ -342,9 +393,9 @@ void KalmBackend::scanBluetoothDevices() {
         for (const auto& b : devs) {
             QStringList parts{b.mac};
             if (b.isVivoTws()) parts.append(QStringLiteral("vivo/iQOO GAIA"));
-            parts.append(b.connected ? QStringLiteral("Подключено") : QStringLiteral("Сопряжено"));
+            parts.append(b.connected ? trKey("status_connected") : trKey("status_paired"));
             const bool already = savedMacs.contains(b.mac);
-            if (already) parts.append(QStringLiteral("В списке"));
+            if (already) parts.append(trKey("status_in_list"));
             out.append(QVariantMap{
                 {QStringLiteral("mac"), b.mac},
                 {QStringLiteral("name"), b.name},
@@ -374,7 +425,7 @@ bool KalmBackend::addSavedDevice(const QString& mac, const QString& name, const 
     }
     m_session.switchToDevice(entry.mac);
     refreshSavedDevicesAsync();
-    setBannerMain(QStringLiteral("Выбраны наушники: %1").arg(entry.displayName()), 1);
+    setBannerMain(trKey("msg_selected_earbuds").arg(entry.displayName()), 1);
     return true;
 }
 
@@ -396,23 +447,19 @@ void KalmBackend::selectSavedDevice(const QString& mac) {
 }
 
 void KalmBackend::connectBluetoothDevice(const QString& mac) {
-    setBannerMain(QStringLiteral("Подключение по Bluetooth к %1…").arg(mac), 0);
+    setBannerMain(trKey("msg_connecting_bt").arg(mac), 0);
     std::thread([this, mac]() {
         const bool ok = connectBluezDevice(mac);
         if (ok) {
             m_session.forceReconnect();
             QMetaObject::invokeMethod(
                 this,
-                [this]() { setBannerMain(QStringLiteral("Bluetooth-соединение установлено"), 1); },
+                [this]() { setBannerMain(trKey("msg_bt_connected"), 1); },
                 Qt::QueuedConnection);
         } else {
             QMetaObject::invokeMethod(
                 this,
-                [this]() {
-                    setBannerMain(
-                        QStringLiteral("Не удалось подключиться по Bluetooth. Проверьте, открыт ли кейс."),
-                        2);
-                },
+                [this]() { setBannerMain(trKey("msg_bt_failed"), 2); },
                 Qt::QueuedConnection);
         }
         refreshSavedDevicesAsync();
@@ -458,44 +505,58 @@ KalmTrayController::KalmTrayController(KalmSession& session, KalmBackend& backen
       m_session(session),
       m_backend(backend),
       m_tray(makeKalmIcon(false, std::nullopt), this) {
-    m_tray.setToolTip(QStringLiteral("Kalm — Ожидание подключения"));
+    m_tray.setToolTip(QStringLiteral("Kalm — %1").arg(trKey("status_waiting")));
 
     m_headerAct = m_menu.addAction(QStringLiteral("Kalm"));
     m_headerAct->setEnabled(false);
-    m_battAct = m_menu.addAction(QStringLiteral("Заряд: —"));
+    m_battAct = m_menu.addAction(QStringLiteral("%1: —").arg(trKey("batt_label")));
     m_battAct->setEnabled(false);
     m_menu.addSeparator();
 
     auto* modeGroup = new QActionGroup(&m_menu);
     modeGroup->setExclusive(true);
 
-    m_actAnc = m_menu.addAction(QStringLiteral("Шумоподавление (ANC)"));
+    m_actAnc = m_menu.addAction(trKey("mode_anc_short"));
     m_actAnc->setCheckable(true);
     modeGroup->addAction(m_actAnc);
     connect(m_actAnc, &QAction::triggered, this, [this]() { m_backend.setNoiseByIndex(0); });
 
-    m_actTrans = m_menu.addAction(QStringLiteral("Прозрачность"));
+    m_actTrans = m_menu.addAction(trKey("mode_trans"));
     m_actTrans->setCheckable(true);
     modeGroup->addAction(m_actTrans);
     connect(m_actTrans, &QAction::triggered, this, [this]() { m_backend.setNoiseByIndex(2); });
 
-    m_actOff = m_menu.addAction(QStringLiteral("Выключено"));
+    m_actOff = m_menu.addAction(trKey("mode_off"));
     m_actOff->setCheckable(true);
     modeGroup->addAction(m_actOff);
     connect(m_actOff, &QAction::triggered, this, [this]() { m_backend.setNoiseByIndex(1); });
 
+    // ANC Level Submenu
+    m_ancLevelMenu = m_menu.addMenu(trKey("tray_anc_level_menu"));
+    auto* ancGroup = new QActionGroup(m_ancLevelMenu);
+    ancGroup->setExclusive(true);
+    const auto& ancList = ancLevelPresets();
+    for (size_t i = 0; i < ancList.size(); ++i) {
+        QAction* act = m_ancLevelMenu->addAction(trKey(ancList[i].trKeyName));
+        act->setCheckable(true);
+        ancGroup->addAction(act);
+        const int idx = static_cast<int>(i);
+        connect(act, &QAction::triggered, this, [this, idx]() { m_backend.setAncLevelByIndex(idx); });
+        m_ancLevelActions.insert(ancList[i].code, act);
+    }
+
     m_menu.addSeparator();
 
-    m_devsMenu = m_menu.addMenu(QStringLiteral("Мои наушники"));
+    m_devsMenu = m_menu.addMenu(trKey("window_my_earbuds"));
     m_devsGroup = new QActionGroup(m_devsMenu);
     m_devsGroup->setExclusive(true);
 
-    QMenu* eqMenu = m_menu.addMenu(QStringLiteral("Звук (DeepX)"));
+    QMenu* eqMenu = m_menu.addMenu(trKey("tray_eq_menu"));
     auto* eqGroup = new QActionGroup(eqMenu);
     eqGroup->setExclusive(true);
     const auto& presets = audioEffectPresets();
     for (size_t i = 0; i < presets.size(); ++i) {
-        QAction* act = eqMenu->addAction(QString::fromUtf8(presets[i].label));
+        QAction* act = eqMenu->addAction(trKey(presets[i].trKeyName));
         act->setCheckable(true);
         eqGroup->addAction(act);
         const int idx = static_cast<int>(i);
@@ -503,15 +564,15 @@ KalmTrayController::KalmTrayController(KalmSession& session, KalmBackend& backen
         m_eqActions.insert(presets[i].code, act);
     }
 
-    m_gameAct = m_menu.addAction(QStringLiteral("Игровой режим"));
+    m_gameAct = m_menu.addAction(trKey("game_title"));
     m_gameAct->setCheckable(true);
     connect(m_gameAct, &QAction::triggered, this, [this](bool checked) { m_backend.setGameMode(checked); });
 
     m_menu.addSeparator();
-    QAction* openAct = m_menu.addAction(QStringLiteral("Открыть Kalm"));
+    QAction* openAct = m_menu.addAction(trKey("action_open_app"));
     connect(openAct, &QAction::triggered, &m_backend, &KalmBackend::windowShowRequested);
 
-    QAction* quitAct = m_menu.addAction(QStringLiteral("Выход"));
+    QAction* quitAct = m_menu.addAction(trKey("action_quit"));
     connect(quitAct, &QAction::triggered, &m_backend, &KalmBackend::quitApp);
 
     m_tray.setContextMenu(&m_menu);
@@ -544,14 +605,16 @@ void KalmTrayController::syncDevicesMenu() {
 
     const QVariantList items = m_backend.savedDevices();
     if (items.isEmpty()) {
-        QAction* empty = m_devsMenu->addAction(QStringLiteral("Нет сохранённых наушников"));
+        QAction* empty = m_devsMenu->addAction(trKey("tray_no_saved"));
         empty->setEnabled(false);
         return;
     }
 
     for (const QVariant& v : items) {
         const QVariantMap d = v.toMap();
-        const QString suffix = d.value(QStringLiteral("btConnected")).toBool() ? QStringLiteral(" (онлайн)") : QString{};
+        const QString suffix = d.value(QStringLiteral("btConnected")).toBool()
+                                   ? QStringLiteral(" (%1)").arg(trKey("status_online_short"))
+                                   : QString{};
         QAction* act = m_devsMenu->addAction(d.value(QStringLiteral("displayName")).toString() + suffix);
         act->setCheckable(true);
         act->setChecked(d.value(QStringLiteral("active")).toBool());
@@ -567,32 +630,47 @@ void KalmTrayController::syncState() {
 
     const QString name = st.deviceName.isEmpty() ? QStringLiteral("Kalm") : st.deviceName;
     if (!st.connected) {
-        m_tray.setToolTip(QStringLiteral("%1 — Не подключено").arg(name));
-        m_headerAct->setText(QStringLiteral("%1 — Не подключено").arg(name));
-        m_battAct->setText(QStringLiteral("Заряд: —"));
+        const QString dis = QStringLiteral("%1 — %2").arg(name, trKey("status_disconnected"));
+        m_tray.setToolTip(dis);
+        m_headerAct->setText(dis);
+        m_battAct->setText(QStringLiteral("%1: —").arg(trKey("batt_label")));
         for (QAction* a : {m_actAnc, m_actTrans, m_actOff, m_gameAct}) a->setEnabled(false);
+        m_ancLevelMenu->setEnabled(false);
         return;
     }
 
-    const QString modeTxt = st.noiseMode ? noiseModeLabelRu(*st.noiseMode) : QStringLiteral("—");
+    QString modeTxt = st.noiseMode ? noiseModeLabel(*st.noiseMode) : QStringLiteral("—");
+    if (st.noiseMode == NoiseMode::Anc && st.noiseEffect) {
+        const QString sub = ancLevelLabel(*st.noiseEffect);
+        if (!sub.isEmpty()) modeTxt += QStringLiteral(": %1").arg(sub);
+    } else if (st.noiseMode == NoiseMode::Transparency && st.transparencyEffect) {
+        const QString sub = transparencyLabel(*st.transparencyEffect);
+        if (!sub.isEmpty()) modeTxt += QStringLiteral(": %1").arg(sub);
+    }
+
     QStringList bParts;
-    if (st.leftBattery.level) bParts.append(QStringLiteral("Л: %1%").arg(*st.leftBattery.level));
-    if (st.rightBattery.level) bParts.append(QStringLiteral("П: %1%").arg(*st.rightBattery.level));
+    if (st.leftBattery.level) bParts.append(QStringLiteral("%1: %2%").arg(trKey("batt_left").left(1), QString::number(*st.leftBattery.level)));
+    if (st.rightBattery.level) bParts.append(QStringLiteral("%1: %2%").arg(trKey("batt_right").left(1), QString::number(*st.rightBattery.level)));
     if (st.caseBattery.level && !st.caseBattery.stale) {
-        bParts.append(QStringLiteral("Кейс: %1%").arg(*st.caseBattery.level));
+        bParts.append(QStringLiteral("%1: %2%").arg(trKey("batt_case"), QString::number(*st.caseBattery.level)));
     }
     const QString battStr = bParts.isEmpty() ? QStringLiteral("—") : bParts.join(QStringLiteral("  "));
 
-    m_tray.setToolTip(QStringLiteral("%1\nРежим: %2\n%3").arg(name, modeTxt, battStr));
+    m_tray.setToolTip(QStringLiteral("%1\n%2\n%3").arg(name, modeTxt, battStr));
     m_headerAct->setText(QStringLiteral("%1 (%2)").arg(name, modeTxt));
-    m_battAct->setText(QStringLiteral("Заряд: %1").arg(battStr));
+    m_battAct->setText(QStringLiteral("%1: %2").arg(trKey("batt_label"), battStr));
 
     for (QAction* a : {m_actAnc, m_actTrans, m_actOff, m_gameAct}) a->setEnabled(true);
+    m_ancLevelMenu->setEnabled(true);
 
     if (st.noiseMode == NoiseMode::Anc) m_actAnc->setChecked(true);
     else if (st.noiseMode == NoiseMode::Off) m_actOff->setChecked(true);
     else if (st.noiseMode == NoiseMode::Transparency) m_actTrans->setChecked(true);
 
+    const int ancCode = st.noiseEffect.value_or(3);
+    if (m_ancLevelActions.contains(ancCode)) {
+        m_ancLevelActions.value(ancCode)->setChecked(true);
+    }
     if (st.audioEffect && m_eqActions.contains(*st.audioEffect)) {
         m_eqActions.value(*st.audioEffect)->setChecked(true);
     }

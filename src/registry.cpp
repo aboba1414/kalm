@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "registry.hpp"
 
+#include "i18n.hpp"
 #include "transport.hpp"
 
 #include <QDir>
@@ -22,10 +23,7 @@ QString normalizeMac(const QString& raw) {
     cleaned.replace(u'-', u':');
     static const QRegularExpression kMacRe(QStringLiteral("^[0-9A-F]{2}(:[0-9A-F]{2}){5}$"));
     if (!kMacRe.match(cleaned).hasMatch()) {
-        throw std::invalid_argument(
-            QStringLiteral("Некорректный MAC-адрес Bluetooth: %1 (ожидается XX:XX:XX:XX:XX:XX)")
-                .arg(raw)
-                .toStdString());
+        throw std::invalid_argument(trKey("err_invalid_mac").arg(raw).toStdString());
     }
     return cleaned;
 }

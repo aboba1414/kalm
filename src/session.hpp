@@ -43,7 +43,11 @@ public:
     void forceReconnect();
 
     bool refresh();
-    bool setNoiseMode(NoiseMode mode);
+    bool setNoiseMode(NoiseMode mode,
+                      std::optional<int> ancLevel = std::nullopt,
+                      std::optional<int> transEffect = std::nullopt);
+    bool setAncLevel(int levelCode);
+    bool setTransparencyEffect(int transCode);
     std::optional<NoiseMode> toggleNoiseMode(const QList<NoiseMode>& cycle = {});
     bool setAudioEffect(int effectId);
     bool setLowLatency(bool enabled);
@@ -118,7 +122,10 @@ private:
 
 // Standalone oneshot CLI operations when no GUI/daemon is running
 QJsonObject oneshotStatus(DeviceRegistry& reg, const QString& deviceQuery = {});
-QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode, const QString& deviceQuery = {});
+QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
+                            std::optional<int> ancLevel = std::nullopt,
+                            std::optional<int> transEffect = std::nullopt,
+                            const QString& deviceQuery = {});
 QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycle, const QString& deviceQuery = {});
 QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& deviceQuery = {});
 QJsonObject oneshotSetGame(DeviceRegistry& reg, bool enabled, const QString& deviceQuery = {});

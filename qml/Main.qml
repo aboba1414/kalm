@@ -31,7 +31,7 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    // ---- Sidebar Drawer for Quick Multi-Earbud Switching ----
+    // ---- Sidebar Drawer ----
     globalDrawer: Kirigami.GlobalDrawer {
         id: drawer
         title: "Kalm"
@@ -45,7 +45,7 @@ Kirigami.ApplicationWindow {
 
             Kirigami.Heading {
                 level: 4
-                text: "Мои наушники"
+                text: i18n.window_my_earbuds
                 Layout.leftMargin: Kirigami.Units.largeSpacing
                 Layout.topMargin: Kirigami.Units.smallSpacing
             }
@@ -53,7 +53,7 @@ Kirigami.ApplicationWindow {
 
         actions: [
             Kirigami.Action {
-                text: "Добавить наушники…"
+                text: i18n.action_add_earbuds_ellipsis
                 icon.name: "list-add-symbolic"
                 onTriggered: {
                     backend.scanBluetoothDevices()
@@ -61,7 +61,7 @@ Kirigami.ApplicationWindow {
                 }
             },
             Kirigami.Action {
-                text: "Настройки Bluetooth KDE…"
+                text: i18n.action_kde_bt_settings
                 icon.name: "preferences-system-bluetooth"
                 onTriggered: backend.openSystemBluetoothSettings()
             },
@@ -69,12 +69,12 @@ Kirigami.ApplicationWindow {
                 separator: true
             },
             Kirigami.Action {
-                text: "Свернуть в трей"
+                text: i18n.action_minimize_tray
                 icon.name: "window-minimize-symbolic"
                 onTriggered: root.visible = false
             },
             Kirigami.Action {
-                text: "Выход"
+                text: i18n.action_quit
                 icon.name: "application-exit-symbolic"
                 onTriggered: backend.quitApp()
             }
@@ -89,7 +89,7 @@ Kirigami.ApplicationWindow {
 
         actions: [
             Kirigami.Action {
-                text: "Добавить наушники"
+                text: i18n.action_add_earbuds
                 icon.name: "list-add-symbolic"
                 onTriggered: {
                     backend.scanBluetoothDevices()
@@ -97,7 +97,7 @@ Kirigami.ApplicationWindow {
                 }
             },
             Kirigami.Action {
-                text: backend.connected ? "Обновить" : "Подключить"
+                text: backend.connected ? i18n.action_refresh : i18n.action_connect
                 icon.name: "view-refresh-symbolic"
                 onTriggered: backend.refreshNow()
             }
@@ -147,7 +147,7 @@ Kirigami.ApplicationWindow {
 
                 Kirigami.Heading {
                     level: 2
-                    text: backend.deviceName || "Наушники не выбраны"
+                    text: backend.deviceName || i18n.status_no_device_selected
                     font.weight: Font.DemiBold
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
@@ -166,7 +166,7 @@ Kirigami.ApplicationWindow {
                     visible: !backend.connected && backend.deviceMac.length > 0
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: Kirigami.Units.smallSpacing
-                    text: "Подключить BT"
+                    text: i18n.action_connect_bt
                     icon.name: "network-bluetooth-activated-symbolic"
                     onClicked: backend.connectBluetoothDevice(backend.deviceMac)
                 }
@@ -194,9 +194,9 @@ Kirigami.ApplicationWindow {
             ]
         }
 
-        // ---- Primary Section: Noise Cancellation Selector ----
+        // ---- Primary Section: Noise Cancellation Selector + ANC Level / Transparency Mode ----
         FormCard.FormHeader {
-            title: "Режим шумоподавления"
+            title: i18n.section_noise
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
@@ -211,27 +211,63 @@ Kirigami.ApplicationWindow {
 
                 actions: [
                     Kirigami.Action {
-                        text: "Шумоподавление"
+                        text: i18n.mode_anc
                         icon.name: "microphone-sensitivity-muted-symbolic"
                         onTriggered: backend.setNoiseByIndex(0)
                     },
                     Kirigami.Action {
-                        text: "Выключено"
+                        text: i18n.mode_off
                         icon.name: "audio-headphones-symbolic"
                         onTriggered: backend.setNoiseByIndex(1)
                     },
                     Kirigami.Action {
-                        text: "Прозрачность"
+                        text: i18n.mode_trans
                         icon.name: "microphone-sensitivity-high-symbolic"
                         onTriggered: backend.setNoiseByIndex(2)
                     }
                 ]
             }
+
+            FormCard.FormDelegateSeparator {
+                visible: backend.noiseModeIndex === 0
+            }
+
+            FormCard.FormComboBoxDelegate {
+                id: ancLevelCombo
+                visible: backend.noiseModeIndex === 0
+                text: i18n.anc_level_title
+                description: i18n.anc_level_desc
+                model: backend.ancLevelModel
+                textRole: "text"
+                valueRole: "value"
+                currentIndex: backend.ancLevelIndex
+                onActivated: function(index) {
+                    backend.setAncLevelByIndex(index)
+                }
+            }
+
+            FormCard.FormDelegateSeparator {
+                visible: backend.noiseModeIndex === 2
+            }
+
+            FormCard.FormComboBoxDelegate {
+                id: transEffectCombo
+                visible: backend.noiseModeIndex === 2
+                text: i18n.trans_effect_title
+                description: i18n.trans_effect_desc
+                model: backend.transEffectModel
+                textRole: "text"
+                valueRole: "value"
+                currentIndex: backend.transEffectIndex
+                onActivated: function(index) {
+                    backend.setTransEffectByIndex(index)
+                }
+            }
         }
 
         // ---- Sound & Controls Section ----
         FormCard.FormHeader {
-            title: "Звук и управление"
+            title: i18n.section_sound
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
@@ -241,8 +277,8 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormComboBoxDelegate {
                 id: eqCombo
-                text: "Звуковой эффект DeepX"
-                description: "Встроенный аудиопрофиль наушников"
+                text: i18n.eq_title
+                description: i18n.eq_desc
                 model: backend.eqModel
                 textRole: "text"
                 valueRole: "value"
@@ -256,8 +292,8 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormComboBoxDelegate {
                 id: cycleCombo
-                text: "Долгое нажатие на ножку"
-                description: "Цикл переключения режимов на самих наушниках"
+                text: i18n.cycle_title
+                description: i18n.cycle_desc
                 model: backend.cycleModel
                 textRole: "text"
                 valueRole: "value"
@@ -271,8 +307,8 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormSwitchDelegate {
                 id: gameSwitch
-                text: "Игровой режим"
-                description: "Пониженная задержка звука в играх и видео"
+                text: i18n.game_title
+                description: i18n.game_desc
                 checked: backend.gameMode
                 onToggled: backend.setGameMode(checked)
             }
@@ -281,8 +317,8 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormSwitchDelegate {
                 id: wearSwitch
-                text: "Обнаружение ношения"
-                description: "Автоматическая пауза при извлечении наушника из уха"
+                text: i18n.wear_detect_title
+                description: i18n.wear_detect_desc
                 checked: backend.wearDetection
                 onToggled: backend.setWearDetection(checked)
             }
@@ -290,7 +326,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Saved Earbuds Section (Multi-Device Management) ----
         FormCard.FormHeader {
-            title: "Мои наушники"
+            title: i18n.section_devices
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
@@ -311,7 +347,7 @@ Kirigami.ApplicationWindow {
 
                     FormCard.FormTextDelegate {
                         text: modelData.displayName
-                        description: modelData.mac + " · " + (modelData.btConnected ? "Подключено по Bluetooth" : "Не в сети")
+                        description: modelData.mac + " · " + (modelData.btConnected ? i18n.status_connected_bt : i18n.status_offline)
                         leadingPadding: Kirigami.Units.largeSpacing * 1.5
 
                         leading: Kirigami.Icon {
@@ -326,14 +362,14 @@ Kirigami.ApplicationWindow {
 
                             Controls.Button {
                                 visible: !modelData.active
-                                text: "Выбрать"
+                                text: i18n.action_select
                                 onClicked: backend.selectSavedDevice(modelData.mac)
                             }
 
                             Controls.ToolButton {
                                 icon.name: "edit-rename-symbolic"
                                 Controls.ToolTip.visible: hovered
-                                Controls.ToolTip.text: "Переименовать"
+                                Controls.ToolTip.text: i18n.action_rename
                                 onClicked: {
                                     renameDialog.targetMac = modelData.mac
                                     renameField.text = modelData.alias.length > 0 ? modelData.alias : modelData.displayName
@@ -344,7 +380,7 @@ Kirigami.ApplicationWindow {
                             Controls.ToolButton {
                                 icon.name: "edit-delete-remove-symbolic"
                                 Controls.ToolTip.visible: hovered
-                                Controls.ToolTip.text: "Удалить из списка"
+                                Controls.ToolTip.text: i18n.action_remove_from_list
                                 onClicked: backend.removeSavedDevice(modelData.mac)
                             }
                         }
@@ -357,8 +393,8 @@ Kirigami.ApplicationWindow {
             }
 
             FormCard.FormSwitchDelegate {
-                text: "Автопереключение между наушниками"
-                description: "Автоматически выбирать подключённую пару из списка"
+                text: i18n.auto_switch_title
+                description: i18n.auto_switch_desc
                 checked: backend.autoSwitch
                 onToggled: backend.setAutoSwitch(checked)
             }
@@ -366,7 +402,7 @@ Kirigami.ApplicationWindow {
             FormCard.FormDelegateSeparator {}
 
             FormCard.FormButtonDelegate {
-                text: "Добавить наушники…"
+                text: i18n.action_add_earbuds_ellipsis
                 icon.name: "list-add-symbolic"
                 onClicked: {
                     backend.scanBluetoothDevices()
@@ -377,7 +413,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Dual-Connection Multipoint Section ----
         FormCard.FormHeader {
-            title: "Мультипоинт"
+            title: i18n.section_multipoint
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
             visible: backend.connected && backend.multipointDevices.length > 0
@@ -412,7 +448,7 @@ Kirigami.ApplicationWindow {
 
                         trailing: Controls.Button {
                             visible: !modelData.active
-                            text: modelData.connected ? "Отключить" : "Подключить"
+                            text: modelData.connected ? i18n.action_disconnect : i18n.action_connect
                             onClicked: backend.toggleMultipointDevice(modelData.mac, !modelData.connected)
                         }
                     }
@@ -422,7 +458,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Find My Earbuds Section ----
         FormCard.FormHeader {
-            title: "Поиск устройства"
+            title: i18n.section_find
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
         }
@@ -432,8 +468,8 @@ Kirigami.ApplicationWindow {
             enabled: backend.connected
 
             FormCard.FormButtonDelegate {
-                text: backend.isRinging ? "Остановить звуковой сигнал" : "Найти наушники звуковым сигналом…"
-                description: "Воспроизвести громкий сигнал на обоих наушниках"
+                text: backend.isRinging ? i18n.find_stop : i18n.find_start
+                description: i18n.find_desc
                 icon.name: backend.isRinging ? "media-playback-stop-symbolic" : "preferences-desktop-notification-bell"
                 onClicked: {
                     if (backend.isRinging) {
@@ -446,14 +482,14 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    // ---- Dialog: Add Earbuds (Scan Bluetooth + Manual MAC) ----
+    // ---- Dialog: Add Earbuds ----
     FormCard.FormCardDialog {
         id: addDeviceDialog
-        title: "Добавить наушники"
+        title: i18n.dlg_add_title
         standardButtons: Controls.Dialog.Close
 
         FormCard.FormSectionText {
-            text: "Выберите сопряжённые наушники из списка Bluetooth или укажите MAC-адрес вручную."
+            text: i18n.dlg_add_hint
         }
 
         Repeater {
@@ -478,7 +514,7 @@ Kirigami.ApplicationWindow {
                     }
 
                     trailing: Controls.Button {
-                        text: modelData.alreadySaved ? "Выбрать" : "Добавить"
+                        text: modelData.alreadySaved ? i18n.action_select : i18n.action_add
                         icon.name: modelData.alreadySaved ? "dialog-ok-apply" : "list-add-symbolic"
                         onClicked: {
                             backend.addSavedDevice(modelData.mac, modelData.name, "")
@@ -492,7 +528,7 @@ Kirigami.ApplicationWindow {
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormButtonDelegate {
-            text: "Обновить список Bluetooth"
+            text: i18n.dlg_refresh_bt
             icon.name: "view-refresh-symbolic"
             onClicked: backend.scanBluetoothDevices()
         }
@@ -501,18 +537,18 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormTextFieldDelegate {
             id: manualMacField
-            label: "MAC-адрес вручную (XX:XX:XX:XX:XX:XX):"
+            label: i18n.dlg_mac_label
             placeholderText: "1C:BA:B8:0F:5A:0F"
         }
 
         FormCard.FormTextFieldDelegate {
             id: manualAliasField
-            label: "Название (необязательно):"
-            placeholderText: "Мои вторые vivo TWS"
+            label: i18n.dlg_alias_label
+            placeholderText: i18n.dlg_alias_placeholder
         }
 
         FormCard.FormButtonDelegate {
-            text: "Добавить по MAC-адресу"
+            text: i18n.dlg_add_by_mac
             icon.name: "list-add-symbolic"
             enabled: manualMacField.text.trim().length >= 17
             onClicked: {
@@ -527,7 +563,7 @@ Kirigami.ApplicationWindow {
         FormCard.FormDelegateSeparator {}
 
         FormCard.FormButtonDelegate {
-            text: "Сопрячь новые наушники в настройках KDE…"
+            text: i18n.dlg_pair_kde
             icon.name: "preferences-system-bluetooth"
             onClicked: backend.openSystemBluetoothSettings()
         }
@@ -537,7 +573,7 @@ Kirigami.ApplicationWindow {
     FormCard.FormCardDialog {
         id: renameDialog
         property string targetMac: ""
-        title: "Переименовать наушники"
+        title: i18n.dlg_rename_title
         standardButtons: Controls.Dialog.Save | Controls.Dialog.Cancel
 
         onAccepted: {
@@ -548,22 +584,23 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormTextFieldDelegate {
             id: renameField
-            label: "Отображаемое имя:"
-            placeholderText: "Оставьте пустым для заводского имени"
+            label: i18n.dlg_rename_label
+            placeholderText: i18n.dlg_rename_placeholder
         }
     }
 
     // ---- Dialog: Find Earbuds Safety Warning ----
     FormCard.FormCardDialog {
         id: findConfirmDialog
-        title: "Внимание: громкий сигнал"
+        title: i18n.find_warn_title
         standardButtons: Controls.Dialog.Yes | Controls.Dialog.Cancel
 
         onAccepted: backend.startFindEarbuds()
 
         FormCard.FormTextDelegate {
-            text: "Убедитесь, что наушники сняты из ушей!"
-            description: "Оба наушника начнут издавать громкий звуковой сигнал для поиска в помещении."
+            text: i18n.find_warn_heading
+            description: i18n.find_warn_body
+            leadingPadding: Kirigami.Units.largeSpacing
             leading: Kirigami.Icon {
                 source: "dialog-warning"
                 implicitWidth: Kirigami.Units.iconSizes.medium
