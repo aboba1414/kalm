@@ -14,8 +14,8 @@ body:
   - type: input
     id: model
     attributes:
-      label: Earbud Model & Kalm Version
-      placeholder: e.g. vivo TWS 5 Hi-Fi, kalm 0.2.0
+      label: Wireless Earbuds Model & Kalm Version
+      placeholder: e.g. vivo TWS 5 Hi-Fi, kalm 0.4.0
     validations:
       required: true
 
