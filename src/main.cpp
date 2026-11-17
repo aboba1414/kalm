@@ -220,7 +220,7 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Kalm"));
     app.setApplicationDisplayName(QStringLiteral("Kalm"));
-    app.setApplicationVersion(QStringLiteral("0.2.0"));
+    app.setApplicationVersion(QStringLiteral("0.3.0"));
     app.setDesktopFileName(QStringLiteral("io.github.kalm"));
     app.setQuitOnLastWindowClosed(false);
     app.setWindowIcon(kalm::makeKalmIcon(false, std::nullopt));
@@ -462,7 +462,7 @@ int main(int argc, char** argv) {
     }
 
     if (wantVersion) {
-        std::cout << "kalm 0.2.0\n";
+        std::cout << "kalm 0.3.0\n";
         return 0;
     }
 
