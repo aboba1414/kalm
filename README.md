@@ -23,13 +23,19 @@ Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlli
 
 ## Quick Start & Running
 
-**From a GitHub Release binary (no build required):**
-1. Install runtime packages for your distro (see [Dependencies](#dependencies) below).
-2. Download `kalm-linux-x86_64` from [Releases](https://github.com/p4radigma/kalm/releases), make it executable, and run:
-   ```bash
-   chmod +x kalm-linux-x86_64
-   ./kalm-linux-x86_64
-   ```
+**Option 1 — Self-Contained AppImage (no Qt6/Kirigami dependencies required):**
+Download `Kalm-x86_64.AppImage` from [Releases](https://github.com/p4radigma/kalm/releases) (only BlueZ/Bluetooth is needed on the host):
+```bash
+chmod +x Kalm-x86_64.AppImage
+./Kalm-x86_64.AppImage
+```
+
+**Option 2 — Lightweight Native Binary (~550 KB, uses system Qt6 & Kirigami):**
+Install runtime packages for your distro (see [Dependencies](#dependencies)), download `kalm-linux-x86_64` from [Releases](https://github.com/p4radigma/kalm/releases), and run:
+```bash
+chmod +x kalm-linux-x86_64
+./kalm-linux-x86_64
+```
 
 **After installing (`kalm` in `PATH` and Application Menu):**
 ```bash

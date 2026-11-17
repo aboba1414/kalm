@@ -4,4 +4,5 @@ dist/
 *.a
 *.so
 *.sock
+*.AppImage
 kalm-*-linux-x86_64*

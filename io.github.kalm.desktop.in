@@ -8,6 +8,6 @@ Comment[ru]=Режимы шумоподавления, заряд и управ�
 Exec=@CMAKE_INSTALL_FULL_BINDIR@/kalm
 Icon=audio-headset
 Terminal=false
-Categories=Qt;KDE;AudioVideo;Audio;Settings;HardwareSettings;
+Categories=Qt;KDE;AudioVideo;Audio;
 Keywords=kalm;vivo;iqoo;tws;anc;bluetooth;earbuds;наушники;шумоподавление;
 StartupNotify=true
