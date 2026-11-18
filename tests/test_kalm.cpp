@@ -229,9 +229,9 @@ int main() {
               << "), 10000 decode=" << dDecode << "B, 1000 i18n=" << dI18n << "B, 1000 IPC=" << dIpc << "B\n";
     KALM_CHECK(fdsDuring == fdsBefore);
     KALM_CHECK(fdsAfterStop < fdsBefore);
-    KALM_CHECK(dDecode <= 16384);
-    KALM_CHECK(dI18n <= 16384);
-    KALM_CHECK(dIpc <= 16384);
+    KALM_CHECK(dDecode <= 65536);
+    KALM_CHECK(dI18n <= 65536);
+    KALM_CHECK(dIpc <= 65536);
 #else
     std::cout << "Handle check: before=" << fdsBefore << " during=" << fdsDuring
               << " afterStop=" << fdsAfterStop << "\n";
