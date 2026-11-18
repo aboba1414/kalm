@@ -4,6 +4,7 @@ import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
+import org.kde.kirigamiaddons.delegates as Delegates
 
 Kirigami.ApplicationWindow {
     id: root
@@ -106,6 +107,7 @@ Kirigami.ApplicationWindow {
             Kirigami.Action {
                 text: root.i18n.action_probe
                 icon.name: "tools-report-bug"
+                visible: backend.supportsProbe
                 onTriggered: {
                     backend.runDiagnosticProbe()
                     probeDialog.open()
@@ -369,6 +371,11 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormComboBoxDelegate {
                 id: ancLevelCombo
+                comboBoxDelegate: Delegates.RoundedItemDelegate {
+                    implicitWidth: ListView.view ? ListView.view.width : Kirigami.Units.gridUnit * 16
+                    text: backend.ancLevelModel[index] ? backend.ancLevelModel[index].text : ""
+                    highlighted: backend.ancLevelIndex === index
+                }
                 visible: backend.noiseModeIndex === 0
                 text: root.i18n.anc_level_title
                 description: root.i18n.anc_level_desc
@@ -395,6 +402,11 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormComboBoxDelegate {
                 id: transEffectCombo
+                comboBoxDelegate: Delegates.RoundedItemDelegate {
+                    implicitWidth: ListView.view ? ListView.view.width : Kirigami.Units.gridUnit * 16
+                    text: backend.transEffectModel[index] ? backend.transEffectModel[index].text : ""
+                    highlighted: backend.transEffectIndex === index
+                }
                 visible: backend.noiseModeIndex === 2
                 text: root.i18n.trans_effect_title
                 description: root.i18n.trans_effect_desc
@@ -430,6 +442,12 @@ Kirigami.ApplicationWindow {
 
             FormCard.FormComboBoxDelegate {
                 id: eqCombo
+                comboBoxDelegate: Delegates.RoundedItemDelegate {
+                    implicitWidth: ListView.view ? ListView.view.width : Kirigami.Units.gridUnit * 16
+                    text: backend.eqModel[index] ? backend.eqModel[index].text : ""
+                    highlighted: backend.eqIndex === index
+                }
+                visible: backend.supportsEq
                 text: root.i18n.eq_title
                 description: root.i18n.eq_desc
                 model: backend.eqModel
@@ -449,10 +467,16 @@ Kirigami.ApplicationWindow {
                 }
             }
 
-            FormCard.FormDelegateSeparator { above: eqCombo; below: cycleCombo }
+            FormCard.FormDelegateSeparator { visible: backend.supportsEq && backend.supportsNoiseCycle; above: eqCombo; below: cycleCombo }
 
             FormCard.FormComboBoxDelegate {
                 id: cycleCombo
+                comboBoxDelegate: Delegates.RoundedItemDelegate {
+                    implicitWidth: ListView.view ? ListView.view.width : Kirigami.Units.gridUnit * 16
+                    text: backend.cycleModel[index] ? backend.cycleModel[index].text : ""
+                    highlighted: backend.cycleIndex === index
+                }
+                visible: backend.supportsNoiseCycle
                 text: root.i18n.cycle_title
                 description: root.i18n.cycle_desc
                 model: backend.cycleModel
@@ -472,20 +496,22 @@ Kirigami.ApplicationWindow {
                 }
             }
 
-            FormCard.FormDelegateSeparator { above: cycleCombo; below: gameSwitch }
+            FormCard.FormDelegateSeparator { visible: backend.supportsNoiseCycle || backend.supportsGameMode || backend.supportsWearDetection; above: cycleCombo; below: gameSwitch }
 
             FormCard.FormSwitchDelegate {
                 id: gameSwitch
+                visible: backend.supportsGameMode
                 text: root.i18n.game_title
                 description: root.i18n.game_desc
                 checked: backend.gameMode
                 onToggled: backend.setGameMode(checked)
             }
 
-            FormCard.FormDelegateSeparator { above: gameSwitch; below: wearSwitch }
+            FormCard.FormDelegateSeparator { visible: backend.supportsGameMode && backend.supportsWearDetection; above: gameSwitch; below: wearSwitch }
 
             FormCard.FormSwitchDelegate {
                 id: wearSwitch
+                visible: backend.supportsWearDetection
                 text: root.i18n.wear_detect_title
                 description: root.i18n.wear_detect_desc
                 checked: backend.wearDetection
@@ -589,12 +615,12 @@ Kirigami.ApplicationWindow {
             title: root.i18n.section_multipoint
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
-            visible: backend.connected && backend.multipointDevices.length > 0
+            visible: backend.supportsMultipoint && backend.connected && backend.multipointDevices.length > 0
         }
 
         FormCard.FormCard {
             maximumWidth: root.cardMaxW
-            visible: backend.connected && backend.multipointDevices.length > 0
+            visible: backend.supportsMultipoint && backend.connected && backend.multipointDevices.length > 0
 
             Repeater {
                 model: backend.multipointDevices
@@ -636,12 +662,14 @@ Kirigami.ApplicationWindow {
             title: root.i18n.section_find
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
+            visible: backend.supportsFindDevice
         }
 
         FormCard.FormCard {
             maximumWidth: root.cardMaxW
             Layout.bottomMargin: Kirigami.Units.largeSpacing
             enabled: backend.connected
+            visible: backend.supportsFindDevice
 
             FormCard.FormButtonDelegate {
                 text: backend.isRinging ? root.i18n.find_stop : root.i18n.find_start

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "i18n.hpp"
+#include "huawei.hpp"
 #include "probe.hpp"
 #include "protocol.hpp"
 #include "registry.hpp"
@@ -107,6 +108,71 @@ int main() {
     KALM_CHECK(d1.mac == u"1C:BA:B8:0F:5A:0F");
     KALM_CHECK(d2.mac == u"AA:BB:CC:11:22:33");
     KALM_CHECK(reg.activeMac() == u"1C:BA:B8:0F:5A:0F");
+
+    // 4b. HUAWEI FreeBuds (SPP) codec, state mapping and capabilities
+    {
+        namespace hw = kalm::huawei;
+        KALM_CHECK(hw::matchesName(QStringLiteral("HUAWEI FreeBuds 6i")));
+        KALM_CHECK(!hw::matchesName(QStringLiteral("vivo TWS 5 Hi-Fi")));
+        KALM_CHECK(hw::matchesName(QStringLiteral("HUAWEI FreeLace Pro 2")));
+
+        KALM_CHECK(hw::crc16Xmodem(QByteArray::fromHex("5a0009000108010002000300")).toHex() == "fbb9");
+        KALM_CHECK(hw::buildQueryBattery().toHex() == "5a0009000108010002000300fbb9");
+        KALM_CHECK(hw::buildSetAnc(hw::kModeAnc).toHex() == "5a0007002b04010201ffffec");
+        KALM_CHECK(hw::buildSetAnc(hw::kModeNormal).toHex() == "5a0007002b0401020000d22d");
+        KALM_CHECK(hw::buildSetAnc(hw::kModeAnc, 2).toHex() == "5a0007002b0401020102c15e");
+        KALM_CHECK(hw::buildSetEqualizerPreset(2).toHex() == "5a0006002b490101021f79");
+
+        const auto profile = hw::profileFor(QStringLiteral("HUAWEI FreeBuds 6i"));
+        KALM_CHECK(profile.sppChannel == 1);
+        KALM_CHECK(hw::ancLevels(profile).size() == 4);
+        KALM_CHECK(hw::eqPresets(profile).size() == 4);
+
+        hw::Decoder decoder;
+        EarbudState st;
+        const auto batteryPackets =
+            decoder.feed(QByteArray::fromHex("5a001000012701011902034b190103030000000678"));
+        KALM_CHECK(batteryPackets.size() == 1);
+        KALM_CHECK(batteryPackets.first().command.toHex() == "0127");
+        KALM_CHECK(hw::applyPacket(batteryPackets.first(), st, profile).stateChanged);
+        KALM_CHECK(st.leftBattery.level == 75);
+        KALM_CHECK(st.rightBattery.level == 25);
+        KALM_CHECK(st.caseBattery.level == 1);
+        KALM_CHECK(!st.leftBattery.stale);
+
+        const auto ancPackets = decoder.feed(QByteArray::fromHex("5a0007002b2a010203015043"));
+        KALM_CHECK(ancPackets.size() == 1);
+        hw::applyPacket(ancPackets.first(), st, profile);
+        KALM_CHECK(st.noiseMode == NoiseMode::Anc);
+        KALM_CHECK(st.noiseEffect == 3);
+
+        const auto eqPackets = decoder.feed(QByteArray::fromHex("5a000f002b4a0101010201020304010203099f7b"));
+        KALM_CHECK(eqPackets.size() == 1);
+        KALM_CHECK(hw::eqCurrentPreset(eqPackets.first()) == 2);
+        hw::applyPacket(eqPackets.first(), st, profile);
+        KALM_CHECK(st.audioEffect == 2);
+
+        const auto llPackets = decoder.feed(QByteArray::fromHex("5a0006002b6c020101fd41"));
+        KALM_CHECK(llPackets.size() == 1);
+        hw::applyPacket(llPackets.first(), st, profile);
+        KALM_CHECK(st.lowLatency.value_or(false));
+
+        const auto dcPackets = decoder.feed(
+            QByteArray::fromHex("5a001b002b310201010301000406598de5aa3ae00501010905556562616edb2a"));
+        KALM_CHECK(dcPackets.size() == 1);
+        const auto dcEffect = hw::applyPacket(dcPackets.first(), st, profile);
+        KALM_CHECK(dcEffect.dualConnectRow);
+        KALM_CHECK(dcEffect.dcCount == 1);
+        KALM_CHECK(dcEffect.dcDevice.macStr() == "59:8D:E5:AA:3A:E0");
+        KALM_CHECK(dcEffect.dcDevice.name == "Ueban");
+        KALM_CHECK(dcEffect.dcDevice.connected());
+
+        // Garbage before a valid packet must be skipped by the resync logic.
+        hw::Decoder noisy;
+        const auto resynced = noisy.feed(QByteArray("garbage") +
+                                         QByteArray::fromHex("5a0007002b2a010203015043"));
+        KALM_CHECK(resynced.size() == 1);
+    }
 
     // 5. Heap & File-Descriptor Leak Stress Test (2,000 decode/JSON cycles + 100 IPC roundtrips)
     auto countOpenFds = []() -> qsizetype {

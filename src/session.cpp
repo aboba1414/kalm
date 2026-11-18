@@ -99,6 +99,57 @@ EarbudState KalmSession::snapshot() const {
     return m_state;
 }
 
+SessionCapabilities KalmSession::capabilities() const {
+    SessionCapabilities caps;
+    QString name;
+    {
+        QMutexLocker lock(&m_lock);
+        name = m_modelName;
+    }
+    if (name.isEmpty()) {
+        if (auto active = m_registry.getActive()) name = active->name;
+    }
+
+    for (const auto& a : ancLevelPresets()) caps.ancLevelList.append(a);
+    for (const auto& t : transparencyPresets()) caps.transparencyList.append(t);
+    for (const auto& e : audioEffectPresets()) caps.eqList.append(e);
+    for (const auto& c : noiseCyclePresets()) caps.cycleList.append(c);
+    caps.profileLabel = QStringLiteral("vivo / iQOO GAIA");
+
+    if (huawei::matchesName(name)) {
+        const auto& profile = huawei::profileFor(name);
+        caps.protocol = DeviceProtocol::Huawei;
+        caps.profileLabel = profile.label;
+        caps.ancLevelList = huawei::ancLevels(profile);
+        caps.transparencyList = huawei::transparencyLevels(profile);
+        caps.eqList = huawei::eqPresets(profile);
+        caps.cycleList.clear();
+        caps.ancLevels = profile.ancLevels;
+        caps.transparency = !caps.transparencyList.isEmpty();
+        caps.equalizer = profile.equalizer;
+        caps.gameMode = profile.lowLatency;
+        caps.wearDetection = profile.autoPause;
+        caps.noiseCycle = false;
+        caps.multipoint = profile.dualConnect;
+        caps.findDevice = false;
+        caps.probe = false;
+    }
+    return caps;
+}
+
+void KalmSession::applyProtocolName(const QString& modelName) {
+    QMutexLocker lock(&m_lock);
+    m_modelName = modelName;
+    if (huawei::matchesName(modelName)) {
+        m_protocol = DeviceProtocol::Huawei;
+        m_hwProfile = huawei::profileFor(modelName);
+        m_state.protocol = QStringLiteral("huawei");
+    } else {
+        m_protocol = DeviceProtocol::Gaia;
+        m_state.protocol = QStringLiteral("gaia");
+    }
+}
+
 void KalmSession::wakeWorker() {
     QMutexLocker lock(&m_wakeMtx);
     m_woken = true;
@@ -111,6 +162,14 @@ void KalmSession::start() {
         QMutexLocker lock(&m_lock);
         m_state.deviceName = active->displayName();
         m_state.deviceMac = active->mac;
+        m_modelName = active->name;
+        if (huawei::matchesName(active->name)) {
+            m_protocol = DeviceProtocol::Huawei;
+            m_hwProfile = huawei::profileFor(active->name);
+            m_state.protocol = QStringLiteral("huawei");
+        } else {
+            m_state.protocol = QStringLiteral("gaia");
+        }
     }
     if (m_worker.joinable()) return;
     m_stop.store(false);
@@ -193,6 +252,8 @@ void KalmSession::closeSocket(bool resetIdentity) {
         fd = m_sockFd;
         m_sockFd = -1;
         wasConnected = m_state.connected;
+        m_hwDcRows.clear();
+        m_hwDcCount = 0;
         if (resetIdentity) {
             m_state = EarbudState{};
         } else {
@@ -257,12 +318,88 @@ std::optional<Frame> KalmSession::sendAndWait(const QByteArray& packet,
     return out;
 }
 
+std::optional<huawei::Packet> KalmSession::sendAndWaitHuawei(
+    const QList<QByteArray>& packets,
+    std::function<bool(const huawei::Packet&)> pred,
+    int timeoutMs) {
+    auto waiter = std::make_shared<HuaweiWaiter>();
+    waiter->pred = std::move(pred);
+    {
+        QMutexLocker lock(&m_hwWaitersMtx);
+        m_hwWaiters.append(waiter);
+    }
+
+    auto cleanup = [&]() {
+        QMutexLocker lock(&m_hwWaitersMtx);
+        m_hwWaiters.removeOne(waiter);
+    };
+
+    if (!packets.isEmpty()) {
+        bool sent = false;
+        for (const QByteArray& packet : packets) {
+            sent = sendRaw(packet) || sent;
+        }
+        if (!sent) {
+            cleanup();
+            return std::nullopt;
+        }
+    }
+
+    std::optional<huawei::Packet> out;
+    {
+        QMutexLocker lock(&waiter->mtx);
+        if (!waiter->done) {
+            waiter->cv.wait(&waiter->mtx, timeoutMs);
+        }
+        if (waiter->done) out = waiter->result;
+    }
+    cleanup();
+    return out;
+}
+
+
+bool KalmSession::huaweiApply(const QByteArray& setPacket,
+                              const QByteArray& ackCommand,
+                              std::function<bool(const huawei::Packet&)> isTarget,
+                              const QByteArray& queryPacket,
+                              int timeoutMs) {
+    if (!sendRaw(setPacket)) return false;
+
+    // Wait for the write acknowledgement first. Sending the follow-up query
+    // immediately makes some firmwares answer with the *old* value (and the
+    // stale reply then overwrites the fresh state), so pace the sequence.
+    sendAndWaitHuawei({}, [&ackCommand](const huawei::Packet& packet) {
+        return packet.command == ackCommand;
+    }, 800);
+
+    if (sendAndWaitHuawei({}, isTarget, 450)) return true;
+    return sendAndWaitHuawei({queryPacket}, isTarget, timeoutMs).has_value();
+}
+
 bool KalmSession::refresh() {
+    DeviceProtocol proto = DeviceProtocol::Gaia;
     WireProfile p;
     {
         QMutexLocker lock(&m_lock);
+        proto = m_protocol;
         p = m_profile;
     }
+    if (proto == DeviceProtocol::Huawei) {
+        bool ok = false;
+        for (const QByteArray& pkt : {
+                 huawei::buildQueryBattery(),
+                 huawei::buildQueryAnc(),
+                 huawei::buildQueryEqualizer(),
+                 huawei::buildQueryLowLatency(),
+                 huawei::buildQueryAutoPause(),
+                 huawei::buildQueryDualConnectEnabled(),
+                 huawei::buildEnumerateDualConnect(),
+             }) {
+            ok = sendRaw(pkt) || ok;
+        }
+        return ok;
+    }
+
     bool ok = false;
     for (const QByteArray& pkt : {
              buildQueryBattery(),
@@ -290,6 +427,46 @@ bool KalmSession::setNoiseMode(NoiseMode mode,
         p = m_profile;
         effAnc = ancLevel.has_value() ? ancLevel : m_state.noiseEffect;
         effTrans = transEffect.has_value() ? transEffect : m_state.transparencyEffect;
+    }
+
+    DeviceProtocol proto = DeviceProtocol::Gaia;
+    {
+        QMutexLocker lock(&m_lock);
+        proto = m_protocol;
+    }
+    if (proto == DeviceProtocol::Huawei) {
+        const int target = huawei::toModeValue(mode);
+        const auto isTarget = [target](const huawei::Packet& pkt) {
+            return pkt.command == QByteArray::fromHex("2b2a") && pkt.param(1).size() >= 2 &&
+                   static_cast<uint8_t>(pkt.param(1).at(1)) == target;
+        };
+
+        const auto current = snapshot().noiseMode;
+        const bool sameMode = current.has_value() && *current == mode;
+
+        // Only pass an explicit cancel/awareness level when the mode is not
+        // being changed. Mode switches are sent with the 0xFF "keep current
+        // level" marker, otherwise the firmware treats the write as a
+        // level-only update and the audio path never switches (observed on
+        // FreeBuds 6i: after "Off" ANC/transparency would not engage).
+        std::optional<int> level;
+        std::optional<int> requestedLevel;
+        if (target == huawei::kModeAnc) {
+            requestedLevel = ancLevel;
+        } else if (target == huawei::kModeAwareness && transEffect.has_value()) {
+            requestedLevel = 2;  // device level 2 = plain awareness
+        }
+        if (sameMode) level = requestedLevel;
+
+        if (!huaweiApply(huawei::buildSetAnc(target, level),
+                         QByteArray::fromHex("2b04"), isTarget, huawei::buildQueryAnc())) {
+            return false;
+        }
+        if (!sameMode && requestedLevel.has_value()) {
+            huaweiApply(huawei::buildSetAnc(target, requestedLevel),
+                        QByteArray::fromHex("2b04"), isTarget, huawei::buildQueryAnc());
+        }
+        return true;
     }
 
     const auto resp = sendAndWait(
@@ -335,9 +512,21 @@ std::optional<NoiseMode> KalmSession::toggleNoiseMode(const QList<NoiseMode>& cy
 
 bool KalmSession::setAudioEffect(int effectId) {
     WireProfile p;
+    DeviceProtocol proto = DeviceProtocol::Gaia;
     {
         QMutexLocker lock(&m_lock);
         p = m_profile;
+        proto = m_protocol;
+    }
+    if (proto == DeviceProtocol::Huawei) {
+        return huaweiApply(
+            huawei::buildSetEqualizerPreset(effectId),
+            QByteArray::fromHex("2b49"),
+            [effectId](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b4a") &&
+                       huawei::eqCurrentPreset(pkt) == effectId;
+            },
+            huawei::buildQueryEqualizer());
     }
     return sendAndWait(
                buildSetAudioEffect(effectId, p),
@@ -351,9 +540,21 @@ bool KalmSession::setAudioEffect(int effectId) {
 
 bool KalmSession::setLowLatency(bool enabled) {
     WireProfile p;
+    DeviceProtocol proto = DeviceProtocol::Gaia;
     {
         QMutexLocker lock(&m_lock);
         p = m_profile;
+        proto = m_protocol;
+    }
+    if (proto == DeviceProtocol::Huawei) {
+        return huaweiApply(
+            huawei::buildSetLowLatency(enabled),
+            QByteArray::fromHex("2b6c"),
+            [enabled](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b6c") && pkt.param(2).size() == 1 &&
+                       (pkt.paramByte(2) != 0) == enabled;
+            },
+            huawei::buildQueryLowLatency());
     }
     return sendAndWait(
                buildSetLowLatency(enabled, p),
@@ -367,9 +568,21 @@ bool KalmSession::setLowLatency(bool enabled) {
 
 bool KalmSession::setWearDetection(bool enabled) {
     WireProfile p;
+    DeviceProtocol proto = DeviceProtocol::Gaia;
     {
         QMutexLocker lock(&m_lock);
         p = m_profile;
+        proto = m_protocol;
+    }
+    if (proto == DeviceProtocol::Huawei) {
+        return huaweiApply(
+            huawei::buildSetAutoPause(enabled),
+            QByteArray::fromHex("2b10"),
+            [enabled](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b11") && pkt.param(1).size() == 1 &&
+                       (pkt.paramByte(1) != 0) == enabled;
+            },
+            huawei::buildQueryAutoPause());
     }
     return sendAndWait(
                buildSetWearDetection(enabled, p),
@@ -382,6 +595,10 @@ bool KalmSession::setWearDetection(bool enabled) {
 }
 
 bool KalmSession::setNoiseCycle(int cycleCode) {
+    {
+        QMutexLocker lock(&m_lock);
+        if (m_protocol == DeviceProtocol::Huawei) return false;
+    }
     WireProfile p;
     {
         QMutexLocker lock(&m_lock);
@@ -398,6 +615,19 @@ bool KalmSession::setNoiseCycle(int cycleCode) {
 }
 
 bool KalmSession::setDeviceConnection(const QString& targetMac, bool connect) {
+    DeviceProtocol proto = DeviceProtocol::Gaia;
+    {
+        QMutexLocker lock(&m_lock);
+        proto = m_protocol;
+    }
+    if (proto == DeviceProtocol::Huawei) {
+        const QByteArray action = huawei::buildDualConnectAction(targetMac, connect);
+        if (action.isEmpty()) return false;
+        if (!sendRaw(action)) return false;
+        ::usleep(400 * 1000);
+        sendRaw(huawei::buildEnumerateDualConnect());
+        return true;
+    }
     const auto snap = snapshot();
     if (snap.pairedDevices.isEmpty()) return false;
     WireProfile p;
@@ -412,6 +642,10 @@ bool KalmSession::setDeviceConnection(const QString& targetMac, bool connect) {
 }
 
 bool KalmSession::findEarbuds(bool ring) {
+    {
+        QMutexLocker lock(&m_lock);
+        if (m_protocol == DeviceProtocol::Huawei) return false;
+    }
     WireProfile p;
     {
         QMutexLocker lock(&m_lock);
@@ -425,6 +659,10 @@ bool KalmSession::findEarbuds(bool ring) {
 }
 
 QString KalmSession::runProbe(const QString& deviceQuery, int listenSeconds) {
+    {
+        QMutexLocker lock(&m_lock);
+        if (m_protocol == DeviceProtocol::Huawei) return trKey("probe_huawei_unsupported");
+    }
     m_paused.store(true);
     closeSocket(false);
     wakeWorker();
@@ -490,7 +728,7 @@ void KalmSession::runLoop() {
             }
         } else {
             for (const auto& bdev : bluezMap) {
-                if (bdev.isVivoTws() && bdev.connected) {
+                if (bdev.isSupportedTws() && bdev.connected) {
                     chosen = m_registry.add(bdev.mac, bdev.name, {}, true);
                     chosenBluez = bdev;
                     emitDevices();
@@ -519,9 +757,14 @@ void KalmSession::runLoop() {
             m_registry.add(chosen->mac, chosenBluez->name, {}, false);
         }
 
+        applyProtocolName(chosenBluez->name);
+        const bool huaweiConn = huawei::matchesName(chosenBluez->name);
+
         RfcommConnection conn;
         try {
-            conn = openGaiaRfcomm(chosen->mac, chosenBluez->path, chosen->displayName(), 2500);
+            conn = huaweiConn
+                       ? openHuaweiRfcomm(chosen->mac, chosenBluez->path, chosen->displayName(), 2500)
+                       : openGaiaRfcomm(chosen->mac, chosenBluez->path, chosen->displayName(), 2500);
         } catch (const std::exception& ex) {
             emitError(QString::fromUtf8(ex.what()));
             sleepInterruptible(3500);
@@ -534,20 +777,42 @@ void KalmSession::runLoop() {
             QMutexLocker lock(&m_lock);
             m_sockFd = rawConnFd;
             m_profile = profile;
+            m_hwDcRows.clear();
+            m_hwDcCount = 0;
             m_state.connected = true;
             m_state.deviceName = chosen->displayName();
             m_state.deviceMac = chosen->mac;
         }
 
         FrameDecoder decoder;
+        huawei::Decoder hwDecoder;
         if (!conn.initialBytes.isEmpty()) {
-            handleFrames(decoder.feed(conn.initialBytes));
+            if (huaweiConn) {
+                handleHuaweiPackets(hwDecoder.feed(conn.initialBytes));
+            } else {
+                handleFrames(decoder.feed(conn.initialBytes));
+            }
         }
 
-        for (const QByteArray& pkt : buildRegisterNotifications()) {
-            sendRaw(pkt);
+        if (huaweiConn) {
+            for (const QByteArray& pkt : {
+                     huawei::buildQueryBattery(),
+                     huawei::buildQueryAnc(),
+                     huawei::buildQueryEqualizer(),
+                     huawei::buildQueryLowLatency(),
+                     huawei::buildQueryInfo(),
+                     huawei::buildQueryAutoPause(),
+                     huawei::buildQueryDualConnectEnabled(),
+                     huawei::buildEnumerateDualConnect(),
+                 }) {
+                sendRaw(pkt);
+            }
+        } else {
+            for (const QByteArray& pkt : buildRegisterNotifications()) {
+                sendRaw(pkt);
+            }
+            refresh();
         }
-        refresh();
         emitDevices();
         emitState();
 
@@ -573,15 +838,24 @@ void KalmSession::runLoop() {
                 if (pfd.revents & POLLIN) {
                     const ssize_t n = ::recv(rawConnFd, buf, sizeof(buf), 0);
                     if (n <= 0) break;
-                    const auto frames = decoder.feed(QByteArray(buf, n));
-                    if (!frames.isEmpty()) handleFrames(frames);
+                    if (huaweiConn) {
+                        const auto packets = hwDecoder.feed(QByteArray(buf, n));
+                        if (!packets.isEmpty()) handleHuaweiPackets(packets);
+                    } else {
+                        const auto frames = decoder.feed(QByteArray(buf, n));
+                        if (!frames.isEmpty()) handleFrames(frames);
+                    }
                 }
             }
 
             if (pollTimer.elapsed() >= 30000) {
                 pollTimer.restart();
-                sendRaw(buildQueryBattery());
-                sendRaw(buildQueryWearState(profile));
+                if (huaweiConn) {
+                    refresh();
+                } else {
+                    sendRaw(buildQueryBattery());
+                    sendRaw(buildQueryWearState(profile));
+                }
             }
         }
 
@@ -632,6 +906,48 @@ void KalmSession::handleFrames(const QList<Frame>& frames) {
     if (changed) {
         emitState();
     }
+}
+
+void KalmSession::handleHuaweiPackets(const QList<huawei::Packet>& packets) {
+    bool changed = false;
+    {
+        QMutexLocker lock(&m_lock);
+        for (const auto& packet : packets) {
+            const auto effect = huawei::applyPacket(packet, m_state, m_hwProfile);
+            if (effect.stateChanged) changed = true;
+            if (!effect.dualConnectRow) continue;
+
+            if (effect.dcCount > 0) m_hwDcCount = effect.dcCount;
+            m_hwDcRows.insert(effect.dcIndex, effect.dcDevice);
+            if (m_hwDcCount > 0 && m_hwDcRows.size() >= m_hwDcCount) {
+                QList<MultiConnectDevice> list;
+                for (auto it = m_hwDcRows.cbegin(); it != m_hwDcRows.cend(); ++it) {
+                    list.append(it.value());
+                }
+                m_state.pairedDevices = list;
+                m_hwDcRows.clear();
+                changed = true;
+            }
+        }
+    }
+
+    QList<std::shared_ptr<HuaweiWaiter>> activeWaiters;
+    {
+        QMutexLocker lock(&m_hwWaitersMtx);
+        activeWaiters = m_hwWaiters;
+    }
+    for (const auto& packet : packets) {
+        for (const auto& waiter : activeWaiters) {
+            QMutexLocker wl(&waiter->mtx);
+            if (!waiter->done && waiter->pred(packet)) {
+                waiter->result = packet;
+                waiter->done = true;
+                waiter->cv.wakeAll();
+            }
+        }
+    }
+
+    if (changed) emitState();
 }
 
 // ---- IpcServer ----
@@ -895,9 +1211,95 @@ QJsonObject runOneshot(DeviceRegistry& reg, const QString& query, Fn&& action) {
     return state.toJson();
 }
 
+struct HuaweiOneshot {
+    RfcommConnection conn;
+    huawei::ModelProfile profile;
+    EarbudState state;
+    huawei::Decoder decoder;
+};
+
+HuaweiOneshot openHuaweiOneshot(const TargetInfo& t) {
+    HuaweiOneshot ctx;
+    ctx.conn = openHuaweiRfcomm(t.mac, t.devPath, t.displayName, 3000);
+    ctx.profile = huawei::profileFor(t.rawName);
+    ctx.state.connected = true;
+    ctx.state.deviceName = t.displayName;
+    ctx.state.deviceMac = t.mac;
+    if (!ctx.conn.initialBytes.isEmpty()) {
+        for (const auto& packet : ctx.decoder.feed(ctx.conn.initialBytes)) {
+            huawei::applyPacket(packet, ctx.state, ctx.profile);
+        }
+    }
+    return ctx;
+}
+
+bool huaweiRecvUntil(int fd, huawei::Decoder& dec, EarbudState& state,
+                     const huawei::ModelProfile& profile,
+                     std::function<bool(const huawei::Packet&)> stopWhen, int timeoutMs) {
+    QElapsedTimer timer;
+    timer.start();
+    bool matched = false;
+    char buf[2048];
+    QMap<int, MultiConnectDevice> dcRows;
+    int dcCount = 0;
+    while (timer.elapsed() < timeoutMs) {
+        const int rem = std::min(400, std::max(50, static_cast<int>(timeoutMs - timer.elapsed())));
+        pollfd pfd{fd, POLLIN, 0};
+        const int pr = ::poll(&pfd, 1, rem);
+        if (pr <= 0) {
+            if (matched) return true;
+            continue;
+        }
+        if (pfd.revents & (POLLERR | POLLHUP)) break;
+        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if (n <= 0) break;
+        for (const auto& packet : dec.feed(QByteArray(buf, n))) {
+            const auto effect = huawei::applyPacket(packet, state, profile);
+            if (effect.dualConnectRow) {
+                if (effect.dcCount > 0) dcCount = effect.dcCount;
+                dcRows.insert(effect.dcIndex, effect.dcDevice);
+                if (dcCount > 0 && dcRows.size() >= dcCount) {
+                    QList<MultiConnectDevice> list;
+                    for (auto it = dcRows.cbegin(); it != dcRows.cend(); ++it) list.append(it.value());
+                    state.pairedDevices = list;
+                }
+            }
+            if (stopWhen(packet)) matched = true;
+        }
+        if (matched) return true;
+    }
+    return matched;
+}
+
+bool targetIsHuawei(DeviceRegistry& reg, const QString& query) {
+    return huawei::matchesName(resolveOneshotTarget(reg, query).rawName);
+}
+
+const QList<QByteArray>& huaweiStatusQueries() {
+    static const QList<QByteArray> kList = {
+        huawei::buildQueryBattery(),
+        huawei::buildQueryAnc(),
+        huawei::buildQueryEqualizer(),
+        huawei::buildQueryLowLatency(),
+        huawei::buildQueryAutoPause(),
+        huawei::buildQueryInfo(),
+        huawei::buildQueryDualConnectEnabled(),
+        huawei::buildEnumerateDualConnect(),
+    };
+    return kList;
+}
+
 }  // namespace
 
 QJsonObject oneshotStatus(DeviceRegistry& reg, const QString& deviceQuery) {
+    if (targetIsHuawei(reg, deviceQuery)) {
+        const TargetInfo t = resolveOneshotTarget(reg, deviceQuery);
+        auto ctx = openHuaweiOneshot(t);
+        for (const QByteArray& pkt : huaweiStatusQueries()) sendAll(ctx.conn.fd.get(), pkt);
+        huaweiRecvUntil(ctx.conn.fd.get(), ctx.decoder, ctx.state, ctx.profile,
+                        [](const huawei::Packet&) { return false; }, 1500);
+        return ctx.state.toJson();
+    }
     return runOneshot(reg, deviceQuery, [](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         for (const QByteArray& pkt : buildRegisterNotifications()) sendAll(fd, pkt);
         for (const QByteArray& pkt : {
@@ -931,6 +1333,26 @@ QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
                             std::optional<int> ancLevel,
                             std::optional<int> transEffect,
                             const QString& deviceQuery) {
+    if (targetIsHuawei(reg, deviceQuery)) {
+        const TargetInfo t = resolveOneshotTarget(reg, deviceQuery);
+        auto ctx = openHuaweiOneshot(t);
+        const int target = huawei::toModeValue(mode);
+        std::optional<int> level;
+        if (target == huawei::kModeAnc) level = ancLevel;
+        else if (target == huawei::kModeAwareness) level = 2;
+        if (!sendAll(ctx.conn.fd.get(), huawei::buildSetAnc(target, level))) {
+            throw std::runtime_error(trKey("err_mode_unconfirmed").toStdString());
+        }
+        const bool ok = huaweiRecvUntil(
+            ctx.conn.fd.get(), ctx.decoder, ctx.state, ctx.profile,
+            [target](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b2a") && pkt.param(1).size() >= 2 &&
+                       static_cast<uint8_t>(pkt.param(1).at(1)) == target;
+            },
+            2000);
+        if (!ok) throw std::runtime_error(trKey("err_mode_unconfirmed").toStdString());
+        return ctx.state.toJson();
+    }
     return runOneshot(reg, deviceQuery, [=](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildQueryBattery());
         // Query current noise state first so we preserve existing ancLevel / transEffect if not explicitly overridden
@@ -956,6 +1378,37 @@ QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
 QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycle, const QString& deviceQuery) {
     const QList<NoiseMode> order =
         cycle.isEmpty() ? QList<NoiseMode>{NoiseMode::Anc, NoiseMode::Transparency, NoiseMode::Off} : cycle;
+    if (targetIsHuawei(reg, deviceQuery)) {
+        const TargetInfo t = resolveOneshotTarget(reg, deviceQuery);
+        auto ctx = openHuaweiOneshot(t);
+        sendAll(ctx.conn.fd.get(), huawei::buildQueryAnc());
+        huaweiRecvUntil(
+            ctx.conn.fd.get(), ctx.decoder, ctx.state, ctx.profile,
+            [](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b2a") && pkt.param(1).size() >= 2;
+            },
+            1500);
+
+        NoiseMode nxt = order.first();
+        if (ctx.state.noiseMode) {
+            const qsizetype idx = order.indexOf(*ctx.state.noiseMode);
+            if (idx >= 0) nxt = order[(idx + 1) % order.size()];
+        }
+
+        const int target = huawei::toModeValue(nxt);
+        std::optional<int> level;
+        if (target == huawei::kModeAnc) level = ctx.state.noiseEffect;
+        sendAll(ctx.conn.fd.get(), huawei::buildSetAnc(target, level));
+        const bool ok = huaweiRecvUntil(
+            ctx.conn.fd.get(), ctx.decoder, ctx.state, ctx.profile,
+            [target](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b2a") && pkt.param(1).size() >= 2 &&
+                       static_cast<uint8_t>(pkt.param(1).at(1)) == target;
+            },
+            2000);
+        if (!ok) throw std::runtime_error(trKey("err_mode_unconfirmed").toStdString());
+        return ctx.state.toJson();
+    }
     return runOneshot(reg, deviceQuery, [&order](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildQueryBattery());
         sendAll(fd, buildQueryNoiseMode(profile));
@@ -979,6 +1432,19 @@ QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycl
 }
 
 QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& deviceQuery) {
+    if (targetIsHuawei(reg, deviceQuery)) {
+        const TargetInfo t = resolveOneshotTarget(reg, deviceQuery);
+        auto ctx = openHuaweiOneshot(t);
+        sendAll(ctx.conn.fd.get(), huawei::buildSetEqualizerPreset(effectId));
+        const bool ok = huaweiRecvUntil(
+            ctx.conn.fd.get(), ctx.decoder, ctx.state, ctx.profile,
+            [effectId](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b4a") && huawei::eqCurrentPreset(pkt) == effectId;
+            },
+            2000);
+        if (!ok) throw std::runtime_error("EQ change unconfirmed.");
+        return ctx.state.toJson();
+    }
     return runOneshot(reg, deviceQuery, [effectId](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildSetAudioEffect(effectId, profile));
         const bool ok = recvUntil(
@@ -990,6 +1456,21 @@ QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& devic
 }
 
 QJsonObject oneshotSetGame(DeviceRegistry& reg, bool enabled, const QString& deviceQuery) {
+    if (targetIsHuawei(reg, deviceQuery)) {
+        const TargetInfo t = resolveOneshotTarget(reg, deviceQuery);
+        auto ctx = openHuaweiOneshot(t);
+        sendAll(ctx.conn.fd.get(), huawei::buildSetLowLatency(enabled));
+        sendAll(ctx.conn.fd.get(), huawei::buildQueryLowLatency());
+        const bool ok = huaweiRecvUntil(
+            ctx.conn.fd.get(), ctx.decoder, ctx.state, ctx.profile,
+            [enabled](const huawei::Packet& pkt) {
+                return pkt.command == QByteArray::fromHex("2b6c") && pkt.param(2).size() == 1 &&
+                       (pkt.paramByte(2) != 0) == enabled;
+            },
+            2000);
+        if (!ok) throw std::runtime_error("Game mode change unconfirmed.");
+        return ctx.state.toJson();
+    }
     return runOneshot(reg, deviceQuery, [enabled](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildSetLowLatency(enabled, profile));
         const bool ok = recvUntil(

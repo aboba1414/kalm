@@ -18,6 +18,8 @@ include(GNUInstallDirs)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Qml Quick DBus)
 
 add_library(kalm_core STATIC
+    src/huawei.cpp
+    src/huawei.hpp
     src/i18n.cpp
     src/i18n.hpp
     src/probe.cpp

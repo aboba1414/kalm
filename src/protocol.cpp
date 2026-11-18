@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "protocol.hpp"
 
+#include "huawei.hpp"
 #include "i18n.hpp"
 
 #include <QDir>
@@ -376,7 +377,10 @@ QJsonObject EarbudState::toJson() const {
         {QStringLiteral("battery"), batt},
         {QStringLiteral("wear"), wear},
         {QStringLiteral("audio_effect"), optInt(audioEffect)},
-        {QStringLiteral("audio_effect_label"), audioEffect ? QJsonValue(audioEffectLabel(*audioEffect)) : QJsonValue()},
+        {QStringLiteral("audio_effect_label"),
+         audioEffect ? QJsonValue(protocol == u"huawei" ? huawei::eqPresetLabel(*audioEffect)
+                                                        : audioEffectLabel(*audioEffect))
+                     : QJsonValue()},
         {QStringLiteral("low_latency"), optBool(lowLatency)},
         {QStringLiteral("noise_cycle"), nc},
         {QStringLiteral("paired_devices"), devs},

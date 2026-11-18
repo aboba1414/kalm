@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "transport.hpp"
 
+#include "huawei.hpp"
 #include "i18n.hpp"
 #include "protocol.hpp"
 
@@ -102,7 +103,7 @@ void saveCachedChannel(const QString& mac, int channel) {
     }
 }
 
-std::optional<RfcommConnection> tryConnectAndHandshake(const QString& mac, int channel, int timeoutMs) {
+std::optional<UniqueFd> connectRfcommSocket(const QString& mac, int channel, int timeoutMs) {
     bdaddr_k bd{};
     if (!parseMacToBdaddr(mac, bd)) return std::nullopt;
 
@@ -134,8 +135,14 @@ std::optional<RfcommConnection> tryConnectAndHandshake(const QString& mac, int c
     }
 
     ::fcntl(fd.get(), F_SETFL, origFlags & ~O_NONBLOCK);
+    return fd;
+}
 
-    if (!sendAll(fd.get(), buildHandshake())) {
+std::optional<RfcommConnection> tryConnectAndHandshake(const QString& mac, int channel, int timeoutMs) {
+    auto fd = connectRfcommSocket(mac, channel, timeoutMs);
+    if (!fd) return std::nullopt;
+
+    if (!sendAll(fd->get(), buildHandshake())) {
         return std::nullopt;
     }
 
@@ -146,18 +153,18 @@ std::optional<RfcommConnection> tryConnectAndHandshake(const QString& mac, int c
     char buf[1024];
     while (timer.elapsed() < 1500) {
         const int rem = std::max(50, static_cast<int>(1500 - timer.elapsed()));
-        pollfd pfd{fd.get(), POLLIN, 0};
+        pollfd pfd{fd->get(), POLLIN, 0};
         const int pr = ::poll(&pfd, 1, rem);
         if (pr <= 0) break;
         if (pfd.revents & (POLLERR | POLLHUP)) break;
-        const ssize_t n = ::recv(fd.get(), buf, sizeof(buf), 0);
+        const ssize_t n = ::recv(fd->get(), buf, sizeof(buf), 0);
         if (n <= 0) break;
         const QByteArray chunk(buf, n);
         leftover.append(chunk);
         const auto frames = decoder.feed(chunk);
         for (const auto& f : frames) {
             if (f.vendor == kGaiaVendor && f.command == kCmdHandshakeResp) {
-                return RfcommConnection{std::move(fd), leftover};
+                return RfcommConnection{std::move(*fd), leftover};
             }
         }
     }
@@ -255,6 +262,10 @@ bool BluezDevice::isVivoTws() const {
            lowName.contains(u"vivo headphones");
 }
 
+bool BluezDevice::isHuaweiTws() const {
+    return huawei::matchesName(name);
+}
+
 bool BluezDevice::isAudioDevice() const {
     if (isVivoTws()) return true;
     const QString lowIcon = icon.toLower();
@@ -329,14 +340,14 @@ QList<BluezDevice> listBluezDevices(bool onlyVivo, bool onlyAudio) {
             item.batteryPct = battProps.value(QStringLiteral("Percentage")).toInt();
         }
 
-        if (onlyVivo && !item.isVivoTws()) continue;
+        if (onlyVivo && !item.isSupportedTws()) continue;
         if (onlyAudio && !item.isAudioDevice()) continue;
         result.append(std::move(item));
     }
     rootArg.endMap();
 
     std::sort(result.begin(), result.end(), [](const BluezDevice& a, const BluezDevice& b) {
-        if (a.isVivoTws() != b.isVivoTws()) return a.isVivoTws() > b.isVivoTws();
+        if (a.isSupportedTws() != b.isSupportedTws()) return a.isSupportedTws() > b.isSupportedTws();
         if (a.connected != b.connected) return a.connected > b.connected;
         if (a.paired != b.paired) return a.paired > b.paired;
         return a.name.toLower() < b.name.toLower();
@@ -427,6 +438,57 @@ RfcommConnection openGaiaRfcomm(const QString& mac, const QString& devPath,
 
     const QString title = name.isEmpty() ? normMac : QStringLiteral("%1 (%2)").arg(name, normMac);
     throw std::runtime_error(trKey("err_gaia_open").arg(title).toStdString());
+}
+
+RfcommConnection openHuaweiRfcomm(const QString& mac, const QString& devPath,
+                                  const QString& name, int timeoutMs) {
+    const QString normMac = mac.trimmed().toUpper();
+    QList<int> candidates;
+    if (auto cached = loadCachedChannel(normMac)) {
+        candidates.append(*cached);
+    }
+    for (int ch : {1, 16}) {
+        if (!candidates.contains(ch)) candidates.append(ch);
+    }
+    if (auto sdpCh = discoverChannelViaBluezSdp(devPath)) {
+        if (!candidates.contains(*sdpCh)) candidates.append(*sdpCh);
+    }
+
+    // The earbuds accept a new SPP session only after the previous one is
+    // closed, and there is a short cool-down. Retry a few times instead of
+    // failing on the first busy attempt.
+    const int perTry = std::min(timeoutMs, 1800);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        for (int channel : candidates) {
+            auto fd = connectRfcommSocket(normMac, channel, perTry);
+            if (!fd) continue;
+            if (!sendAll(fd->get(), huawei::buildQueryBattery())) continue;
+
+            huawei::Decoder decoder;
+            QByteArray collected;
+            QElapsedTimer timer;
+            timer.start();
+            char buf[1024];
+            while (timer.elapsed() < perTry) {
+                const int rem = std::max(50, static_cast<int>(perTry - timer.elapsed()));
+                pollfd pfd{fd->get(), POLLIN, 0};
+                const int pr = ::poll(&pfd, 1, rem);
+                if (pr <= 0) break;
+                if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+                const ssize_t n = ::recv(fd->get(), buf, sizeof(buf), 0);
+                if (n <= 0) break;
+                collected.append(buf, n);
+                if (!decoder.feed(QByteArray(buf, n)).isEmpty()) {
+                    saveCachedChannel(normMac, channel);
+                    return RfcommConnection{std::move(*fd), collected};
+                }
+            }
+        }
+        if (attempt < 2) ::usleep(1200 * 1000);
+    }
+
+    const QString title = name.isEmpty() ? normMac : QStringLiteral("%1 (%2)").arg(name, normMac);
+    throw std::runtime_error(trKey("err_huawei_open").arg(title).toStdString());
 }
 
 }  // namespace kalm

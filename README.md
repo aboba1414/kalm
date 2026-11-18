@@ -1,6 +1,6 @@
 # Kalm
 
-Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlling active noise cancellation (ANC), sound profiles, and device settings on **vivo / iQOO TWS** earbuds (verified on *vivo TWS 5 Hi-Fi*) over Bluetooth RFCOMM (Compact GAIA protocol).
+Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlling active noise cancellation (ANC), sound profiles, and device settings on **vivo / iQOO TWS** and **HUAWEI FreeBuds / FreeLace** earbuds (verified on *vivo TWS 5 Hi-Fi* and *HUAWEI FreeBuds 6i*) over Bluetooth RFCOMM (vivo Compact GAIA and HUAWEI SPP protocols).
 
 > **Note:** This project was built with the assistance of AI and is intended primarily for personal use.
 
@@ -63,6 +63,10 @@ kalm devices [list|scan|add <MAC> --alias <name>|use <name>|rename <name> <new>|
 | **Supported (GAIA v4 Profile)** | **vivo TWS 5**, **vivo TWS 5 Pro**, **vivo TWS 5e**, **vivo TWS 4**, **vivo TWS 4 Hi-Fi**, **vivo TWS 3**, **vivo TWS 3 Pro**, **iQOO TWS 5**, **iQOO TWS 5e**, **iQOO TWS 2**, **iQOO TWS 1**, **iQOO TWS 1e**, **vivo / iQOO Headphones** |
 | **Supported (GAIA v3 Profiles)** | **vivo TWS 3e**, **vivo TWS Air3 Pro**, **iQOO TWS Air3 Pro** |
 | **Battery / EQ / Multipoint Only** | Non-ANC GAIA models (*vivo TWS 5i / 3i / Air3 / Air2*, *iQOO TWS 5i / 1i / Air3*) |
+| **Verified on Hardware (HUAWEI SPP)** | **HUAWEI FreeBuds 6i** (ANC modes + levels including Dynamic, Transparency, battery per bud/case, EQ presets, Game Mode, auto-pause, dual-connect list) |
+| **Supported (HUAWEI SPP)** | Other **HUAWEI FreeBuds / FreeLace / Eyewear** models exposing the SPP service on channel 1 (features depend on the model) |
+
+*HUAWEI devices are recognized by their Bluetooth name and use the SPP profile on RFCOMM channel 1. The protocol implementation was ported from the GPL-3 [OpenFreebuds](https://github.com/melianmiko/OpenFreebuds) project.*
 
 *Have another vivo / iQOO model? Run `kalm probe` and open a [New Earbud Model Support](#requesting-support-for-new-earbuds-what-users-need-to-do) issue.*
 

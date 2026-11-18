@@ -148,6 +148,7 @@ struct EarbudState {
     QString deviceName;
     QString deviceMac;
     QString firmware;
+    QString protocol = QStringLiteral("gaia");  // "gaia" | "huawei"
 
     std::optional<NoiseMode> noiseMode;
     std::optional<int> noiseEffect;

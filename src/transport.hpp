@@ -57,6 +57,8 @@ struct BluezDevice {
     std::optional<int> batteryPct;
 
     bool isVivoTws() const;
+    bool isHuaweiTws() const;
+    bool isSupportedTws() const { return isVivoTws() || isHuaweiTws(); }
     bool isAudioDevice() const;
 };
 
@@ -75,6 +77,14 @@ RfcommConnection openGaiaRfcomm(const QString& mac,
                                 const QString& devPath = {},
                                 const QString& name = {},
                                 int timeoutMs = 2500);
+
+// Opens an RFCOMM socket to a HUAWEI device (SPP channel 1 on modern models)
+// and verifies it by sending a battery query. Any bytes received while
+// validating are returned via `initialBytes`.
+RfcommConnection openHuaweiRfcomm(const QString& mac,
+                                  const QString& devPath = {},
+                                  const QString& name = {},
+                                  int timeoutMs = 2500);
 
 int getRfcommPeerChannel(int fd) noexcept;
 bool sendAll(int fd, const QByteArray& data);
