@@ -253,12 +253,61 @@ std::optional<Frame> KalmSession::sendAndWait(const QByteArray& packet,
     return out;
 }
 
+std::optional<RealmeOppoFrame> KalmSession::sendAndWaitRealme(
+    const QByteArray& packet,
+    std::function<bool(const RealmeOppoFrame&)> pred,
+    int timeoutMs) {
+    auto waiter = std::make_shared<RealmeWaiter>();
+    waiter->pred = std::move(pred);
+    {
+        QMutexLocker lock(&m_waitersMtx);
+        m_realmeWaiters.append(waiter);
+    }
+
+    auto cleanup = [&]() {
+        QMutexLocker lock(&m_waitersMtx);
+        m_realmeWaiters.removeOne(waiter);
+    };
+
+    if (!sendRaw(packet)) {
+        cleanup();
+        return std::nullopt;
+    }
+
+    std::optional<RealmeOppoFrame> out;
+    {
+        QMutexLocker lock(&waiter->mtx);
+        if (!waiter->done) {
+            waiter->cv.wait(&waiter->mtx, timeoutMs);
+        }
+        if (waiter->done) out = waiter->result;
+    }
+    cleanup();
+    return out;
+}
+
 bool KalmSession::refresh() {
+    DeviceProtocol proto;
     WireProfile p;
     {
         QMutexLocker lock(&m_lock);
+        proto = m_protocol;
         p = m_profile;
     }
+
+    if (proto == DeviceProtocol::RealmeOppoTl) {
+        bool ok = false;
+        for (const QByteArray& pkt : {
+                 buildRealmeOppoPacket(kTlCmdGetFirmware, 0, {}),
+                 buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}),
+                 buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}),
+                 buildRealmeOppoPacket(kTlCmdGetSwitches, 0, QByteArray("\x04\x05\x06\x07", 4)),
+             }) {
+            ok = sendRaw(pkt) || ok;
+        }
+        return ok;
+    }
+
     bool ok = false;
     for (const QByteArray& pkt : {
              buildQueryBattery(),
@@ -278,14 +327,37 @@ bool KalmSession::refresh() {
 bool KalmSession::setNoiseMode(NoiseMode mode,
                                std::optional<int> ancLevel,
                                std::optional<int> transEffect) {
+    DeviceProtocol proto;
     WireProfile p;
     std::optional<int> effAnc;
     std::optional<int> effTrans;
     {
         QMutexLocker lock(&m_lock);
+        proto = m_protocol;
         p = m_profile;
         effAnc = ancLevel.has_value() ? ancLevel : m_state.noiseEffect;
         effTrans = transEffect.has_value() ? transEffect : m_state.transparencyEffect;
+    }
+
+    if (proto == DeviceProtocol::RealmeOppoTl) {
+        const auto ack = sendAndWaitRealme(
+            buildRealmeSetNoise(mode, 0),
+            [](const RealmeOppoFrame& f) {
+                return (f.command == kTlRespSetNoise && !f.payload.isEmpty() &&
+                        static_cast<uint8_t>(f.payload[0]) == 0) ||
+                       f.command == kTlRespGetNoise;
+            },
+            2200);
+        if (ack) {
+            {
+                QMutexLocker lock(&m_lock);
+                m_state.noiseMode = mode;
+            }
+            emitState();
+            sendRaw(buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
+            return true;
+        }
+        return false;
     }
 
     const auto resp = sendAndWait(
@@ -487,7 +559,7 @@ void KalmSession::runLoop() {
             }
         } else {
             for (const auto& bdev : bluezMap) {
-                if (bdev.isVivoTws() && bdev.connected) {
+                if (bdev.isSupportedTws() && bdev.connected) {
                     chosen = m_registry.add(bdev.mac, bdev.name, {}, true);
                     chosenBluez = bdev;
                     emitDevices();
@@ -518,7 +590,8 @@ void KalmSession::runLoop() {
 
         RfcommConnection conn;
         try {
-            conn = openGaiaRfcomm(chosen->mac, chosenBluez->path, chosen->displayName(), 2500);
+            conn = openEarbudRfcomm(chosen->mac, chosenBluez->path, chosen->displayName(),
+                                    chosenBluez->uuids, 2500);
         } catch (const std::exception& ex) {
             emitError(QString::fromUtf8(ex.what()));
             sleepInterruptible(3500);
@@ -526,30 +599,44 @@ void KalmSession::runLoop() {
         }
 
         const WireProfile profile = selectProfile(chosenBluez->name);
+        const DeviceProtocol proto = conn.protocol;
         const SocketHandle rawConnFd = conn.fd.release();
         {
             QMutexLocker lock(&m_lock);
             m_sockFd = rawConnFd;
+            m_protocol = proto;
             m_profile = profile;
             m_state.connected = true;
+            m_state.protocol = proto;
             m_state.deviceName = chosen->displayName();
             m_state.deviceMac = chosen->mac;
         }
 
-        FrameDecoder decoder;
+        FrameDecoder vivoDecoder;
+        RealmeOppoDecoder realmeDecoder;
         if (!conn.initialBytes.isEmpty()) {
-            handleFrames(decoder.feed(conn.initialBytes));
+            if (proto == DeviceProtocol::RealmeOppoTl) {
+                handleRealmeFrames(realmeDecoder.feed(conn.initialBytes));
+            } else {
+                handleFrames(vivoDecoder.feed(conn.initialBytes));
+            }
         }
 
-        for (const QByteArray& pkt : buildRegisterNotifications()) {
-            sendRaw(pkt);
+        if (proto == DeviceProtocol::VivoGaia) {
+            for (const QByteArray& pkt : buildRegisterNotifications()) {
+                sendRaw(pkt);
+            }
         }
         refresh();
         emitDevices();
         emitState();
 
+        const qint64 pollIntervalMs = (proto == DeviceProtocol::RealmeOppoTl) ? 8000 : 30000;
         QElapsedTimer pollTimer;
         pollTimer.start();
+        QElapsedTimer eventDebounceTimer;
+        bool pendingEventRefresh = false;
+
         char buf[2048];
         while (!m_stop.load()) {
             SocketHandle curFd = kInvalidSocket;
@@ -559,19 +646,40 @@ void KalmSession::runLoop() {
             }
             if (curFd != rawConnFd) break;
 
-            const int pr = pollSocketRead(rawConnFd, 1000);
+            const int waitMs = pendingEventRefresh ? 200 : 1000;
+            const int pr = pollSocketRead(rawConnFd, waitMs);
             if (pr < 0) break;
             if (pr > 0) {
                 const qint64 n = recvSocket(rawConnFd, buf, sizeof(buf));
                 if (n <= 0) break;
-                const auto frames = decoder.feed(QByteArray(buf, static_cast<qsizetype>(n)));
-                if (!frames.isEmpty()) handleFrames(frames);
+                const QByteArray chunk(buf, static_cast<qsizetype>(n));
+                if (proto == DeviceProtocol::RealmeOppoTl) {
+                    const auto frames = realmeDecoder.feed(chunk);
+                    if (!frames.isEmpty() && handleRealmeFrames(frames)) {
+                        pendingEventRefresh = true;
+                        eventDebounceTimer.restart();
+                    }
+                } else {
+                    const auto frames = vivoDecoder.feed(chunk);
+                    if (!frames.isEmpty()) handleFrames(frames);
+                }
             }
 
-            if (pollTimer.elapsed() >= 30000) {
+            if (pendingEventRefresh && eventDebounceTimer.elapsed() >= 400) {
+                pendingEventRefresh = false;
+                sendRaw(buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
+                sendRaw(buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
+            }
+
+            if (pollTimer.elapsed() >= pollIntervalMs) {
                 pollTimer.restart();
-                sendRaw(buildQueryBattery());
-                sendRaw(buildQueryWearState(profile));
+                if (proto == DeviceProtocol::RealmeOppoTl) {
+                    sendRaw(buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
+                    sendRaw(buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
+                } else {
+                    sendRaw(buildQueryBattery());
+                    sendRaw(buildQueryWearState(profile));
+                }
             }
         }
 
@@ -622,6 +730,44 @@ void KalmSession::handleFrames(const QList<Frame>& frames) {
     if (changed) {
         emitState();
     }
+}
+
+bool KalmSession::handleRealmeFrames(const QList<RealmeOppoFrame>& frames) {
+    bool changed = false;
+    bool needEventRefresh = false;
+    {
+        QMutexLocker lock(&m_lock);
+        for (const RealmeOppoFrame& f : frames) {
+            const QString tag = applyRealmeFrameToState(f, m_state);
+            if (tag == u"event_refresh") {
+                needEventRefresh = true;
+                changed = true;
+            } else if (tag != u"ignored" && tag != u"handshake") {
+                changed = true;
+            }
+        }
+    }
+
+    QList<std::shared_ptr<RealmeWaiter>> activeWaiters;
+    {
+        QMutexLocker lock(&m_waitersMtx);
+        activeWaiters = m_realmeWaiters;
+    }
+    for (const RealmeOppoFrame& f : frames) {
+        for (const auto& w : activeWaiters) {
+            QMutexLocker wl(&w->mtx);
+            if (!w->done && w->pred(f)) {
+                w->result = f;
+                w->done = true;
+                w->cv.wakeAll();
+            }
+        }
+    }
+
+    if (changed) {
+        emitState();
+    }
+    return needEventRefresh;
 }
 
 // ---- IpcServer ----
@@ -788,6 +934,7 @@ struct TargetInfo {
     QString displayName;
     QString rawName;
     QString devPath;
+    QStringList uuids;
 };
 
 TargetInfo resolveOneshotTarget(DeviceRegistry& reg, const QString& query) {
@@ -803,19 +950,19 @@ TargetInfo resolveOneshotTarget(DeviceRegistry& reg, const QString& query) {
                 trKey("err_not_connected_bt").arg(resolved->displayName(), resolved->mac).toStdString());
         }
         return {resolved->mac, resolved->displayName(), bdev ? bdev->name : resolved->name,
-                bdev ? bdev->path : QString{}};
+                bdev ? bdev->path : QString{}, bdev ? bdev->uuids : QStringList{}};
     }
 
     if (auto active = reg.getActive()) {
         const auto bdev = findBluezByMac(active->mac);
         if (bdev && bdev->connected) {
-            return {active->mac, active->displayName(), bdev->name, bdev->path};
+            return {active->mac, active->displayName(), bdev->name, bdev->path, bdev->uuids};
         }
         if (reg.autoSwitch()) {
             for (const auto& cand : reg.devices()) {
                 const auto cb = findBluezByMac(cand.mac);
                 if (cb && cb->connected) {
-                    return {cand.mac, cand.displayName(), cb->name, cb->path};
+                    return {cand.mac, cand.displayName(), cb->name, cb->path, cb->uuids};
                 }
             }
         }
@@ -825,7 +972,7 @@ TargetInfo resolveOneshotTarget(DeviceRegistry& reg, const QString& query) {
 
     for (const auto& bdev : listBluezDevices(true, false)) {
         if (bdev.connected) {
-            return {bdev.mac, bdev.name, bdev.name, bdev.path};
+            return {bdev.mac, bdev.name, bdev.name, bdev.path, bdev.uuids};
         }
     }
     throw std::runtime_error(trKey("err_no_vivo_found").toStdString());
@@ -859,29 +1006,75 @@ bool recvUntil(SocketHandle fd, FrameDecoder& dec, EarbudState& state, const Wir
     return matched;
 }
 
+bool recvUntilRealme(SocketHandle fd, RealmeOppoDecoder& dec, EarbudState& state,
+                     std::function<bool(const RealmeOppoFrame&)> stopWhen, int timeoutMs) {
+    QElapsedTimer timer;
+    timer.start();
+    bool matched = false;
+    char buf[2048];
+    while (timer.elapsed() < timeoutMs) {
+        const int rem = std::min(400, std::max(50, static_cast<int>(timeoutMs - timer.elapsed())));
+        const int pr = pollSocketRead(fd, rem);
+        if (pr == 0) {
+            if (matched) return true;
+            continue;
+        }
+        if (pr < 0) break;
+        const qint64 n = recvSocket(fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        for (const RealmeOppoFrame& f : dec.feed(QByteArray(buf, static_cast<qsizetype>(n)))) {
+            applyRealmeFrameToState(f, state);
+            if (stopWhen(f)) matched = true;
+        }
+        if (matched) return true;
+    }
+    return matched;
+}
+
 template <typename Fn>
 QJsonObject runOneshot(DeviceRegistry& reg, const QString& query, Fn&& action) {
     const TargetInfo t = resolveOneshotTarget(reg, query);
-    const RfcommConnection conn = openGaiaRfcomm(t.mac, t.devPath, t.displayName, 3000);
+    const RfcommConnection conn = openEarbudRfcomm(t.mac, t.devPath, t.displayName, t.uuids, 3000);
     const WireProfile profile = selectProfile(t.rawName);
     EarbudState state;
     state.connected = true;
+    state.protocol = conn.protocol;
     state.deviceName = t.displayName;
     state.deviceMac = t.mac;
-    FrameDecoder dec;
+    FrameDecoder vivoDec;
+    RealmeOppoDecoder realmeDec;
     if (!conn.initialBytes.isEmpty()) {
-        for (const Frame& f : dec.feed(conn.initialBytes)) {
-            applyFrameToState(f, state);
+        if (conn.protocol == DeviceProtocol::RealmeOppoTl) {
+            for (const auto& f : realmeDec.feed(conn.initialBytes)) applyRealmeFrameToState(f, state);
+        } else {
+            for (const Frame& f : vivoDec.feed(conn.initialBytes)) applyFrameToState(f, state);
         }
     }
-    action(conn.fd.get(), profile, state, dec);
+    action(conn.fd.get(), conn.protocol, profile, state, vivoDec, realmeDec);
     return state.toJson();
 }
 
 }  // namespace
 
 QJsonObject oneshotStatus(DeviceRegistry& reg, const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [](SocketHandle fd, DeviceProtocol proto, const WireProfile& profile, EarbudState& state, FrameDecoder& dec, RealmeOppoDecoder& rdec) {
+        if (proto == DeviceProtocol::RealmeOppoTl) {
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdGetFirmware, 0, {}));
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdGetSwitches, 0, QByteArray("\x04\x05\x06\x07", 4)));
+            QList<uint16_t> seen;
+            recvUntilRealme(
+                fd, rdec, state,
+                [&](const RealmeOppoFrame& f) {
+                    if (!seen.contains(f.command)) seen.append(f.command);
+                    return seen.contains(kTlRespGetBattery) && seen.contains(kTlRespGetNoise) &&
+                           seen.contains(kTlRespGetFirmware);
+                },
+                1200);
+            return;
+        }
+
         for (const QByteArray& pkt : buildRegisterNotifications()) sendAll(fd, pkt);
         for (const QByteArray& pkt : {
                  buildQueryBattery(),
@@ -914,7 +1107,22 @@ QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
                             std::optional<int> ancLevel,
                             std::optional<int> transEffect,
                             const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [=](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [=](SocketHandle fd, DeviceProtocol proto, const WireProfile& profile, EarbudState& state, FrameDecoder& dec, RealmeOppoDecoder& rdec) {
+        if (proto == DeviceProtocol::RealmeOppoTl) {
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
+            sendAll(fd, buildRealmeSetNoise(mode, 0));
+            const bool ok = recvUntilRealme(
+                fd, rdec, state,
+                [](const RealmeOppoFrame& f) {
+                    return f.command == kTlRespSetNoise && !f.payload.isEmpty() &&
+                           static_cast<uint8_t>(f.payload[0]) == 0;
+                },
+                2200);
+            if (!ok) throw std::runtime_error(trKey("err_mode_unconfirmed").toStdString());
+            state.noiseMode = mode;
+            return;
+        }
+
         sendAll(fd, buildQueryBattery());
         if (!ancLevel.has_value() || !transEffect.has_value()) {
             sendAll(fd, buildQueryNoiseMode(profile));
@@ -938,7 +1146,29 @@ QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
 QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycle, const QString& deviceQuery) {
     const QList<NoiseMode> order =
         cycle.isEmpty() ? QList<NoiseMode>{NoiseMode::Anc, NoiseMode::Transparency, NoiseMode::Off} : cycle;
-    return runOneshot(reg, deviceQuery, [&order](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [&order](SocketHandle fd, DeviceProtocol proto, const WireProfile& profile, EarbudState& state, FrameDecoder& dec, RealmeOppoDecoder& rdec) {
+        if (proto == DeviceProtocol::RealmeOppoTl) {
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
+            recvUntilRealme(fd, rdec, state, [](const RealmeOppoFrame& f) { return f.command == kTlRespGetNoise; }, 1200);
+            NoiseMode nxt = order.first();
+            if (state.noiseMode) {
+                const qsizetype idx = order.indexOf(*state.noiseMode);
+                if (idx >= 0) nxt = order[(idx + 1) % order.size()];
+            }
+            sendAll(fd, buildRealmeSetNoise(nxt, 0));
+            const bool ok = recvUntilRealme(
+                fd, rdec, state,
+                [](const RealmeOppoFrame& f) {
+                    return f.command == kTlRespSetNoise && !f.payload.isEmpty() &&
+                           static_cast<uint8_t>(f.payload[0]) == 0;
+                },
+                2200);
+            if (!ok) throw std::runtime_error(trKey("err_mode_unconfirmed").toStdString());
+            state.noiseMode = nxt;
+            return;
+        }
+
         sendAll(fd, buildQueryBattery());
         sendAll(fd, buildQueryNoiseMode(profile));
         recvUntil(fd, dec, state, profile, [](const Frame& f) { return f.command == kCmdReportNoiseMode; }, 1500);
@@ -961,7 +1191,7 @@ QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycl
 }
 
 QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [effectId](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [effectId](SocketHandle fd, DeviceProtocol /*proto*/, const WireProfile& profile, EarbudState& state, FrameDecoder& dec, RealmeOppoDecoder& /*rdec*/) {
         sendAll(fd, buildSetAudioEffect(effectId, profile));
         const bool ok = recvUntil(
             fd, dec, state, profile,
@@ -972,7 +1202,7 @@ QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& devic
 }
 
 QJsonObject oneshotSetGame(DeviceRegistry& reg, bool enabled, const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [enabled](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [enabled](SocketHandle fd, DeviceProtocol /*proto*/, const WireProfile& profile, EarbudState& state, FrameDecoder& dec, RealmeOppoDecoder& /*rdec*/) {
         sendAll(fd, buildSetLowLatency(enabled, profile));
         const bool ok = recvUntil(
             fd, dec, state, profile,

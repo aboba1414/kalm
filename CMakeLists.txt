@@ -8,6 +8,39 @@ set(CMAKE_AUTORCC ON)
 
 include(GNUInstallDirs)
 
+set(KALM_DISPLAY_VERSION "" CACHE STRING "Displayed app version (numeric release tag or commit SHA)")
+if(KALM_DISPLAY_VERSION STREQUAL "")
+    find_package(Git QUIET)
+    if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --tags --exact-match HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE _exact_tag
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _tag_rc
+        )
+        if(_tag_rc EQUAL 0 AND _exact_tag MATCHES "^v[0-9]+\\.[0-9]+(\\.[0-9]+)?$")
+            set(KALM_DISPLAY_VERSION "${_exact_tag}")
+        else()
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --short=7 HEAD
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _short_sha
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+            if(NOT _short_sha STREQUAL "")
+                set(KALM_DISPLAY_VERSION "${_short_sha}")
+            endif()
+        endif()
+    endif()
+    if(KALM_DISPLAY_VERSION STREQUAL "")
+        set(KALM_DISPLAY_VERSION "v${PROJECT_VERSION}")
+    endif()
+endif()
+add_compile_definitions(KALM_DISPLAY_VERSION="${KALM_DISPLAY_VERSION}")
+
 option(ENABLE_SANITIZERS "Enable AddressSanitizer, LeakSanitizer, and UndefinedBehaviorSanitizer" OFF)
 if(MSVC)
     add_compile_options(/W4 /utf-8 /EHsc)

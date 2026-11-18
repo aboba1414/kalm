@@ -341,7 +341,7 @@ QList<BluezDevice> listBluezDevices(bool onlyVivo, bool onlyAudio) {
             }
         }
 
-        if (onlyVivo && !item.isVivoTws()) continue;
+        if (onlyVivo && !item.isSupportedTws()) continue;
         if (onlyAudio && !item.isAudioDevice()) continue;
         result.append(std::move(item));
 
@@ -352,7 +352,7 @@ QList<BluezDevice> listBluezDevices(bool onlyVivo, bool onlyAudio) {
     ::BluetoothFindDeviceClose(hFind);
 
     std::sort(result.begin(), result.end(), [](const BluezDevice& a, const BluezDevice& b) {
-        if (a.isVivoTws() != b.isVivoTws()) return a.isVivoTws() > b.isVivoTws();
+        if (a.isSupportedTws() != b.isSupportedTws()) return a.isSupportedTws() > b.isSupportedTws();
         if (a.connected != b.connected) return a.connected > b.connected;
         if (a.paired != b.paired) return a.paired > b.paired;
         return a.name.toLower() < b.name.toLower();

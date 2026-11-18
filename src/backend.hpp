@@ -26,12 +26,14 @@ QIcon makeKalmIcon(bool connected, std::optional<NoiseMode> mode);
 class KalmBackend : public QObject {
     Q_OBJECT
 
+    Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
     Q_PROPERTY(QVariantMap i18n READ i18n NOTIFY languageChanged)
     Q_PROPERTY(QVariantList languageModel READ languageModel NOTIFY languageChanged)
     Q_PROPERTY(int languageIndex READ languageIndex NOTIFY languageChanged)
 
     Q_PROPERTY(bool quitting READ quitting NOTIFY quittingChanged)
     Q_PROPERTY(bool connected READ connected NOTIFY stateChanged)
+    Q_PROPERTY(bool vivoFeatures READ vivoFeatures NOTIFY stateChanged)
     Q_PROPERTY(QString deviceName READ deviceName NOTIFY stateChanged)
     Q_PROPERTY(QString deviceMac READ deviceMac NOTIFY stateChanged)
     Q_PROPERTY(QString firmware READ firmware NOTIFY stateChanged)
@@ -80,12 +82,14 @@ public:
     void pushErrorFromWorker(const QString& msg);
     void pushShowFromWorker(const QString& activationToken = {});
 
+    QString appVersion() const;
     QVariantMap i18n() const;
     QVariantList languageModel() const { return m_languageModel; }
     int languageIndex() const;
 
     bool quitting() const { return m_quitting; }
     bool connected() const { return m_state.connected; }
+    bool vivoFeatures() const { return !m_state.connected || m_state.protocol == DeviceProtocol::VivoGaia; }
     QString deviceName() const;
     QString deviceMac() const { return m_state.deviceMac; }
     QString firmware() const { return m_state.firmware; }

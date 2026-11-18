@@ -67,13 +67,25 @@ private:
         Frame result;
     };
 
+    struct RealmeWaiter {
+        std::function<bool(const RealmeOppoFrame&)> pred;
+        QMutex mtx;
+        QWaitCondition cv;
+        bool done = false;
+        RealmeOppoFrame result;
+    };
+
     void runLoop();
     void handleFrames(const QList<Frame>& frames);
+    bool handleRealmeFrames(const QList<RealmeOppoFrame>& frames);
     void closeSocket(bool resetIdentity = false);
     bool sendRaw(const QByteArray& data);
     std::optional<Frame> sendAndWait(const QByteArray& packet,
                                      std::function<bool(const Frame&)> pred,
                                      int timeoutMs = 1800);
+    std::optional<RealmeOppoFrame> sendAndWaitRealme(const QByteArray& packet,
+                                                     std::function<bool(const RealmeOppoFrame&)> pred,
+                                                     int timeoutMs = 2000);
     void wakeWorker();
 
     void emitState();
@@ -88,6 +100,7 @@ private:
 
     mutable QRecursiveMutex m_lock;
     SocketHandle m_sockFd = kInvalidSocket;
+    DeviceProtocol m_protocol = DeviceProtocol::VivoGaia;
     WireProfile m_profile;
     EarbudState m_state;
 
@@ -100,6 +113,7 @@ private:
 
     QMutex m_waitersMtx;
     QList<std::shared_ptr<Waiter>> m_waiters;
+    QList<std::shared_ptr<RealmeWaiter>> m_realmeWaiters;
 };
 
 class IpcServer {

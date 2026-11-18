@@ -105,13 +105,14 @@ void printStatusHuman(const QJsonObject& data) {
     const QString mac = data.value(QStringLiteral("device_mac")).toString();
     const QString fw = data.value(QStringLiteral("firmware")).toString(QStringLiteral("—"));
 
+    const bool isVivoProto = (data.value(QStringLiteral("protocol")).toString(QStringLiteral("vivo_gaia")) == u"vivo_gaia");
     QString mode = QStringLiteral("—");
     if (auto nm = kalm::parseNoiseModeStr(data.value(QStringLiteral("noise_mode")).toString())) {
         mode = kalm::noiseModeLabel(*nm);
-        if (*nm == kalm::NoiseMode::Anc && !data.value(QStringLiteral("anc_level")).isNull()) {
+        if (isVivoProto && *nm == kalm::NoiseMode::Anc && !data.value(QStringLiteral("anc_level")).isNull()) {
             const QString sub = kalm::ancLevelLabel(data.value(QStringLiteral("anc_level")).toInt());
             if (!sub.isEmpty()) mode += QStringLiteral(" (%1)").arg(sub);
-        } else if (*nm == kalm::NoiseMode::Transparency && !data.value(QStringLiteral("transparency_effect")).isNull()) {
+        } else if (isVivoProto && *nm == kalm::NoiseMode::Transparency && !data.value(QStringLiteral("transparency_effect")).isNull()) {
             const QString sub = kalm::transparencyLabel(data.value(QStringLiteral("transparency_effect")).toInt());
             if (!sub.isEmpty()) mode += QStringLiteral(" (%1)").arg(sub);
         }
@@ -513,7 +514,11 @@ int main(int argc, char** argv) {
     }
 
     if (wantVersion) {
+#ifdef KALM_DISPLAY_VERSION
+        std::cout << "kalm " << KALM_DISPLAY_VERSION << "\n";
+#else
         std::cout << "kalm 0.4.0\n";
+#endif
         return 0;
     }
 

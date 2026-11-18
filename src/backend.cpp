@@ -156,6 +156,14 @@ void KalmBackend::rebuildLocalizedModels() {
     }
 }
 
+#ifndef KALM_DISPLAY_VERSION
+#define KALM_DISPLAY_VERSION "dev"
+#endif
+
+QString KalmBackend::appVersion() const {
+    return QStringLiteral("Kalm · " KALM_DISPLAY_VERSION);
+}
+
 QVariantMap KalmBackend::i18n() const { return i18nVariantMap(); }
 
 int KalmBackend::languageIndex() const {
@@ -457,13 +465,14 @@ void KalmBackend::scanBluetoothDevices() {
         for (const auto& b : devs) {
             QStringList parts{b.mac};
             if (b.isVivoTws()) parts.append(QStringLiteral("vivo/iQOO GAIA"));
+            else if (b.isRealmeOppoTws()) parts.append(QStringLiteral("realme/OPPO"));
             parts.append(b.connected ? trKey("status_connected") : trKey("status_paired"));
             const bool already = savedMacs.contains(b.mac);
             if (already) parts.append(trKey("status_in_list"));
             out.append(QVariantMap{
                 {QStringLiteral("mac"), b.mac},
                 {QStringLiteral("name"), b.name},
-                {QStringLiteral("isVivo"), b.isVivoTws()},
+                {QStringLiteral("isVivo"), b.isSupportedTws()},
                 {QStringLiteral("connected"), b.connected},
                 {QStringLiteral("alreadySaved"), already},
                 {QStringLiteral("subtitle"), parts.join(QStringLiteral(" · "))},
@@ -773,11 +782,12 @@ void KalmTrayController::syncState() {
         return;
     }
 
+    const bool isVivo = (st.protocol == DeviceProtocol::VivoGaia);
     QString modeTxt = st.noiseMode ? noiseModeLabel(*st.noiseMode) : QStringLiteral("—");
-    if (st.noiseMode == NoiseMode::Anc && st.noiseEffect) {
+    if (isVivo && st.noiseMode == NoiseMode::Anc && st.noiseEffect) {
         const QString sub = ancLevelLabel(*st.noiseEffect);
         if (!sub.isEmpty()) modeTxt += QStringLiteral(": %1").arg(sub);
-    } else if (st.noiseMode == NoiseMode::Transparency && st.transparencyEffect) {
+    } else if (isVivo && st.noiseMode == NoiseMode::Transparency && st.transparencyEffect) {
         const QString sub = transparencyLabel(*st.transparencyEffect);
         if (!sub.isEmpty()) modeTxt += QStringLiteral(": %1").arg(sub);
     }
@@ -794,8 +804,12 @@ void KalmTrayController::syncState() {
     m_headerAct->setText(QStringLiteral("%1 (%2)").arg(name, modeTxt));
     m_battAct->setText(QStringLiteral("%1: %2").arg(trKey("batt_label"), battStr));
 
-    for (QAction* a : {m_actAnc, m_actTrans, m_actOff, m_gameAct}) a->setEnabled(true);
-    m_ancLevelMenu->setEnabled(true);
+    for (QAction* a : {m_actAnc, m_actTrans, m_actOff}) a->setEnabled(true);
+    m_ancLevelMenu->menuAction()->setVisible(isVivo);
+    m_ancLevelMenu->setEnabled(isVivo);
+    m_eqMenu->menuAction()->setVisible(isVivo);
+    m_gameAct->setVisible(isVivo);
+    m_gameAct->setEnabled(isVivo);
 
     if (st.noiseMode == NoiseMode::Anc) m_actAnc->setChecked(true);
     else if (st.noiseMode == NoiseMode::Off) m_actOff->setChecked(true);

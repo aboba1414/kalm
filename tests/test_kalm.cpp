@@ -33,14 +33,38 @@
 int main() {
     using namespace kalm;
 
-    // 1. Protocol & ANC degrees encoding + models.json + realme/OPPO 0xAA codec
+    // 1. Protocol & ANC degrees encoding + models.json + realme Buds T300 (0xAA) codec
     KALM_CHECK(maskMacForReport(QStringLiteral("1c:ba:b8:0f:5a:0f")) == u"1C:BA:B8:XX:XX:XX");
-    const QByteArray rmPkt = buildRealmeOppoPacket(0x0102, 3, QByteArray::fromHex("9a07"));
-    KALM_CHECK(rmPkt.toHex() == "aa09000002010302009a07");
-    const auto rmParsed = parseRealmeOppoFrames(rmPkt + buildRealmeOppoPacket(0x8107, 6, QByteArray::fromHex("0003015002550360")));
-    KALM_CHECK(rmParsed.size() == 2);
-    KALM_CHECK(rmParsed[0].command == 0x0102 && rmParsed[0].seq == 3 && rmParsed[0].payload.toHex() == "9a07");
-    KALM_CHECK(rmParsed[1].command == 0x8107 && rmParsed[1].seq == 6 && rmParsed[1].payload.size() == 8);
+    KALM_CHECK(buildRealmeOppoPacket(0x0106, 0, {}).toHex() == "aa0700000601000000");
+    KALM_CHECK(buildRealmeSetNoise(NoiseMode::Anc, 0).toHex() == "aa0a00000404000300010108");
+    KALM_CHECK(buildRealmeSetNoise(NoiseMode::Off, 0).toHex() == "aa0a00000404000300010101");
+    KALM_CHECK(buildRealmeSetNoise(NoiseMode::Transparency, 0).toHex() == "aa0a00000404000300010102");
+
+    // Verify real captured realme Buds T300 frames from Issue #1 + AGENTS.md
+    {
+        RealmeOppoDecoder rdec;
+        const QByteArray t300Stream =
+            buildRealmeOppoPacket(0x8105, 7, QByteArray::fromHex("0003312c322c312e312e302e3035342c322c322c312e312e302e3035342c332c322c303232")) +
+            buildRealmeOppoPacket(0x8106, 8, QByteArray::fromHex("000301d5025a0300")) +  // L=85% charging(0x80|85=0xD5), R=90%, Case=0%(inactive->stale)
+            buildRealmeOppoPacket(0x810B, 9, QByteArray::fromHex("0002"));               // Transparency (0x02)
+
+        QList<RealmeOppoFrame> rframes;
+        for (qsizetype i = 0; i < t300Stream.size(); i += 11) {
+            rframes.append(rdec.feed(t300Stream.mid(i, 11)));
+        }
+        KALM_CHECK(rframes.size() == 3);
+
+        EarbudState rst;
+        rst.connected = true;
+        rst.protocol = DeviceProtocol::RealmeOppoTl;
+        for (const auto& rf : rframes) applyRealmeFrameToState(rf, rst);
+
+        KALM_CHECK(rst.firmware == u"1.1.0.054");
+        KALM_CHECK(rst.leftBattery.level == 85 && rst.leftBattery.charging && !rst.leftBattery.stale);
+        KALM_CHECK(rst.rightBattery.level == 90 && !rst.rightBattery.charging && !rst.rightBattery.stale);
+        KALM_CHECK(!rst.caseBattery.level.has_value() && rst.caseBattery.stale);
+        KALM_CHECK(rst.noiseMode == NoiseMode::Transparency);
+    }
 
     const WireProfile air3 = selectProfile(QStringLiteral("vivo TWS Air3 Pro"));
     KALM_CHECK(air3.gaiaVersion == 3);

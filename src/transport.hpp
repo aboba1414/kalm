@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "protocol.hpp"
+
 #include <QByteArray>
 #include <QList>
 #include <QString>
@@ -80,16 +82,19 @@ struct BluezDevice {
     std::optional<int> batteryPct;
 
     bool isVivoTws() const;
+    bool isRealmeOppoTws() const;
+    bool isSupportedTws() const { return isVivoTws() || isRealmeOppoTws(); }
     bool isAudioDevice() const;
 };
 
-QList<BluezDevice> listBluezDevices(bool onlyVivo = false, bool onlyAudio = false);
+QList<BluezDevice> listBluezDevices(bool onlySupported = false, bool onlyAudio = false);
 std::optional<BluezDevice> findBluezByMac(const QString& mac);
 bool connectBluezDevice(const QString& mac);
 
 struct RfcommConnection {
     UniqueSocket fd;
     QByteArray initialBytes;
+    DeviceProtocol protocol = DeviceProtocol::VivoGaia;
 };
 
 // Opens a raw RFCOMM socket via 128-bit Service UUID (SDP lookup) without sending any protocol bytes.
@@ -107,6 +112,19 @@ RfcommConnection openGaiaRfcomm(const QString& mac,
                                 const QString& devPath = {},
                                 const QString& name = {},
                                 int timeoutMs = 2500);
+
+// Opens a verified OPPO / OnePlus / realme Link "TL" (0xAA) RFCOMM socket (0x0100 -> 0x8100 verified).
+std::optional<RfcommConnection> tryOpenRealmeOppoRfcomm(const QString& mac,
+                                                        const QString& devPath = {},
+                                                        const QStringList& uuids = {},
+                                                        int timeoutMs = 2500);
+
+// Auto-negotiates either Vivo GAIA or realme/OPPO/OnePlus TL protocol for the target earbuds.
+RfcommConnection openEarbudRfcomm(const QString& mac,
+                                  const QString& devPath = {},
+                                  const QString& name = {},
+                                  const QStringList& uuids = {},
+                                  int timeoutMs = 2500);
 
 int getRfcommPeerChannel(SocketHandle s) noexcept;
 

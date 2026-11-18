@@ -444,9 +444,9 @@ ApplicationWindow {
                         }
                     }
 
-                    // ANC Level selector (visible when ANC active)
+                    // ANC Level selector (visible when ANC active on Vivo)
                     ColumnLayout {
-                        visible: backend.noiseModeIndex === 0
+                        visible: backend.vivoFeatures && backend.noiseModeIndex === 0
                         Layout.fillWidth: true
                         spacing: 4
 
@@ -473,9 +473,9 @@ ApplicationWindow {
                         Label { text: root.i18n.anc_level_desc; color: root.textSecondary; font.pixelSize: 12 }
                     }
 
-                    // Transparency Effect selector (visible when Transparency active)
+                    // Transparency Effect selector (visible when Transparency active on Vivo)
                     ColumnLayout {
-                        visible: backend.noiseModeIndex === 2
+                        visible: backend.vivoFeatures && backend.noiseModeIndex === 2
                         Layout.fillWidth: true
                         spacing: 4
 
@@ -504,8 +504,9 @@ ApplicationWindow {
                 }
             }
 
-            // ---- 4. Sound & Controls Section ----
+            // ---- 4. Sound & Controls Section (Vivo GAIA) ----
             Label {
+                visible: backend.vivoFeatures
                 text: root.i18n.section_sound
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -516,6 +517,7 @@ ApplicationWindow {
             }
 
             Rectangle {
+                visible: backend.vivoFeatures
                 Layout.fillWidth: true
                 implicitHeight: soundCol.implicitHeight + 28
                 radius: 12
@@ -784,8 +786,9 @@ ApplicationWindow {
                 }
             }
 
-            // ---- 7. Find Device Section ----
+            // ---- 7. Find Device Section (Vivo GAIA) ----
             Label {
+                visible: backend.vivoFeatures
                 text: root.i18n.section_find
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -796,6 +799,7 @@ ApplicationWindow {
             }
 
             Rectangle {
+                visible: backend.vivoFeatures
                 Layout.fillWidth: true
                 implicitHeight: findRow.implicitHeight + 24
                 radius: 12
@@ -826,6 +830,18 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+
+            // ---- Subtle Version Footer ----
+            Label {
+                Layout.fillWidth: true
+                Layout.topMargin: 14
+                Layout.bottomMargin: 4
+                horizontalAlignment: Text.AlignHCenter
+                text: backend.appVersion
+                font.pixelSize: 11
+                color: root.textSecondary
+                opacity: 0.55
             }
         }
     }

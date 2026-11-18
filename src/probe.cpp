@@ -15,11 +15,6 @@ namespace kalm {
 
 namespace {
 
-constexpr const char* kRealmeOppoTlUuid = "0000079a-d102-11e1-9b23-00025b00a5a5";
-constexpr const char* kOppoHeyMelodyUuid = "db764ac8-4b08-7f25-aafe-59d03c27bae3";
-constexpr const char* kOppoHeyMelodyAltUuid = "db764ac8-4b08-7f25-aafe-59d03c27bae4";
-constexpr const char* kStandardSppUuid = "00001101-0000-1000-8000-00805f9b34fb";
-
 QString hexSpaced(const QByteArray& bytes) {
     if (bytes.isEmpty()) return QStringLiteral("(empty)");
     QStringList out;
@@ -166,21 +161,19 @@ bool runRealmeOppoProbe(SocketHandle fd, QTextStream& out) {
 
     const std::vector<TlSpec> specs = {
         {"GetCapabilities", 0x0100, {}},
-        {"SetMTU(512)", 0x0101, QByteArray("\x00\x02", 2)},
-        {"InitVendor(0x079A)", 0x0102, QByteArray("\x9a\x07", 2)},
-        {"InitQuery", 0x0103, {}},
         {"GetFirmwareVersion", 0x0105, {}},
-        {"GetBattery", 0x0107, {}},
+        {"GetBattery (0x0106)", 0x0106, {}},
+        {"GetBatteryAlt (0x0107)", 0x0107, {}},
         {"GetNoiseReduction", 0x010B, {}},
         {"GetSwitchFeatures", 0x010D, QByteArray("\x04\x05\x06\x07", 4)},
         {"GetStatusFeature", 0x0129, QByteArray("\x01\x02\x03\x04", 4)},
     };
 
-    // Quick test with first 2 commands before running all 9
-    sendAll(fd, buildRealmeOppoPacket(specs[0].cmd, 1, specs[0].payload));
+    // Quick test with 0x0100 or 0x0106 before running all queries
+    sendAll(fd, buildRealmeOppoPacket(specs[0].cmd, 0, specs[0].payload));
     QByteArray firstRx = drainRawBytes(fd, 350);
     if (firstRx.isEmpty()) {
-        sendAll(fd, buildRealmeOppoPacket(specs[2].cmd, 2, specs[2].payload));
+        sendAll(fd, buildRealmeOppoPacket(0x0106, 0, {}));
         firstRx = drainRawBytes(fd, 350);
     }
     if (firstRx.isEmpty()) {
@@ -188,7 +181,7 @@ bool runRealmeOppoProbe(SocketHandle fd, QTextStream& out) {
     }
 
     out << "\n### OPPO / OnePlus / realme Link (`0xAA` Protocol) Probe\n";
-    uint8_t seq = 3;
+    uint8_t seq = 1;
     // Log initial reply
     const auto initParsed = parseRealmeOppoFrames(firstRx);
     if (!initParsed.isEmpty()) {
@@ -336,81 +329,6 @@ QString maskMacForReport(const QString& mac) {
     return QStringLiteral("XX:XX:XX:XX:XX:XX");
 }
 
-QByteArray buildRealmeOppoPacket(uint16_t cmd, uint8_t seq, const QByteArray& payload) {
-    // Inner Packet (5-byte little-endian header + payload)
-    QByteArray inner(5 + payload.size(), Qt::Uninitialized);
-    inner[0] = static_cast<char>(cmd & 0xFF);
-    inner[1] = static_cast<char>((cmd >> 8) & 0xFF);
-    inner[2] = static_cast<char>(seq);
-    inner[3] = static_cast<char>(payload.size() & 0xFF);
-    inner[4] = static_cast<char>((payload.size() >> 8) & 0xFF);
-    if (!payload.isEmpty()) {
-        std::memcpy(inner.data() + 5, payload.constData(), static_cast<size_t>(payload.size()));
-    }
-
-    // Outer OPPOv1Wrapper single-frame wrapper: [0xAA, uleb128(inner.size() + 2), 0x00, 0x00, inner...]
-    const int linkLen = static_cast<int>(inner.size()) + 2;
-    QByteArray out;
-    out.reserve(4 + inner.size());
-    out.append(static_cast<char>(0xAA));
-    if (linkLen <= 127) {
-        out.append(static_cast<char>(linkLen & 0x7F));
-    } else {
-        out.append(static_cast<char>((linkLen & 0x7F) | 0x80));
-        out.append(static_cast<char>((linkLen >> 7) & 0x7F));
-    }
-    out.append('\x00');
-    out.append('\x00');
-    out.append(inner);
-    return out;
-}
-
-QList<RealmeOppoFrame> parseRealmeOppoFrames(const QByteArray& data) {
-    QList<RealmeOppoFrame> frames;
-    qsizetype pos = 0;
-    while (pos < data.size()) {
-        if (static_cast<uint8_t>(data[pos]) != 0xAA) {
-            ++pos;
-            continue;
-        }
-        if (pos + 4 > data.size()) break;
-        int linkLen = 0;
-        int lenBytes = 0;
-        if ((static_cast<uint8_t>(data[pos + 1]) & 0x80) == 0) {
-            linkLen = static_cast<uint8_t>(data[pos + 1]) & 0x7F;
-            lenBytes = 1;
-        } else {
-            if (pos + 5 > data.size()) break;
-            linkLen = (static_cast<uint8_t>(data[pos + 1]) & 0x7F) |
-                      ((static_cast<int>(static_cast<uint8_t>(data[pos + 2])) & 0x7F) << 7);
-            lenBytes = 2;
-        }
-
-        const qsizetype totalLen = 1 + lenBytes + linkLen;
-        if (totalLen < 9 || pos + totalLen > data.size()) break;
-
-        const uint8_t fsnFlags = static_cast<uint8_t>(data[pos + 1 + lenBytes]) & 0x03;
-        const qsizetype innerOffset = pos + 1 + lenBytes + ((fsnFlags == 0) ? 2 : 3);
-        const qsizetype innerLen = (pos + totalLen) - innerOffset;
-        if (innerLen >= 5) {
-            const uint16_t cmd = static_cast<uint8_t>(data[innerOffset]) |
-                                 (static_cast<uint16_t>(static_cast<uint8_t>(data[innerOffset + 1])) << 8);
-            const uint8_t seq = static_cast<uint8_t>(data[innerOffset + 2]);
-            const uint16_t dlen = static_cast<uint8_t>(data[innerOffset + 3]) |
-                                  (static_cast<uint16_t>(static_cast<uint8_t>(data[innerOffset + 4])) << 8);
-            const qsizetype avail = std::min<qsizetype>(dlen, innerLen - 5);
-            RealmeOppoFrame f;
-            f.command = cmd;
-            f.seq = seq;
-            f.payload = data.mid(innerOffset + 5, avail);
-            f.raw = data.mid(pos, totalLen);
-            frames.append(std::move(f));
-        }
-        pos += totalLen;
-    }
-    return frames;
-}
-
 QString generateDiagnosticReport(DeviceRegistry& registry,
                                  const QString& deviceQuery,
                                  int listenSeconds) {
@@ -455,7 +373,9 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
         sock = openRfcommByUuid(dev.mac, dev.path, u, 2500);
         if (sock) {
             const int ch = getRfcommPeerChannel(sock.get());
-            connectedVia = QStringLiteral("UUID `%1` (channel %2)").arg(u).arg(ch);
+            connectedVia = (ch > 0)
+                               ? QStringLiteral("UUID `%1` (channel %2)").arg(u).arg(ch)
+                               : QStringLiteral("UUID `%1` (SDP auto)").arg(u);
             break;
         } else {
             out << "- UUID `" << u << "`: *(connection refused / not open)*\n";

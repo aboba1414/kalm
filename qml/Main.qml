@@ -364,12 +364,12 @@ Kirigami.ApplicationWindow {
             }
 
             FormCard.FormDelegateSeparator {
-                visible: backend.noiseModeIndex === 0
+                visible: backend.vivoFeatures && backend.noiseModeIndex === 0
             }
 
             FormCard.FormComboBoxDelegate {
                 id: ancLevelCombo
-                visible: backend.noiseModeIndex === 0
+                visible: backend.vivoFeatures && backend.noiseModeIndex === 0
                 text: root.i18n.anc_level_title
                 description: root.i18n.anc_level_desc
                 model: backend.ancLevelModel
@@ -390,12 +390,12 @@ Kirigami.ApplicationWindow {
             }
 
             FormCard.FormDelegateSeparator {
-                visible: backend.noiseModeIndex === 2
+                visible: backend.vivoFeatures && backend.noiseModeIndex === 2
             }
 
             FormCard.FormComboBoxDelegate {
                 id: transEffectCombo
-                visible: backend.noiseModeIndex === 2
+                visible: backend.vivoFeatures && backend.noiseModeIndex === 2
                 text: root.i18n.trans_effect_title
                 description: root.i18n.trans_effect_desc
                 model: backend.transEffectModel
@@ -416,9 +416,10 @@ Kirigami.ApplicationWindow {
             }
         }
 
-        // ---- Sound & Controls Section ----
+        // ---- Sound & Controls Section (Vivo GAIA) ----
         FormCard.FormHeader {
             maximumWidth: root.cardMaxW
+            visible: backend.vivoFeatures
             title: root.i18n.section_sound
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
@@ -426,6 +427,7 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormCard {
             maximumWidth: root.cardMaxW
+            visible: backend.vivoFeatures
             enabled: backend.connected
 
             FormCard.FormComboBoxDelegate {
@@ -630,9 +632,10 @@ Kirigami.ApplicationWindow {
             }
         }
 
-        // ---- Find My Earbuds Section ----
+        // ---- Find My Earbuds Section (Vivo GAIA) ----
         FormCard.FormHeader {
             maximumWidth: root.cardMaxW
+            visible: backend.vivoFeatures
             title: root.i18n.section_find
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
@@ -640,7 +643,7 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormCard {
             maximumWidth: root.cardMaxW
-            Layout.bottomMargin: Kirigami.Units.largeSpacing
+            visible: backend.vivoFeatures
             enabled: backend.connected
 
             FormCard.FormButtonDelegate {
@@ -655,6 +658,17 @@ Kirigami.ApplicationWindow {
                     }
                 }
             }
+        }
+
+        // ---- Subtle Version Footer ----
+        Controls.Label {
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
+            horizontalAlignment: Text.AlignHCenter
+            text: backend.appVersion
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            opacity: 0.48
         }
     }
 
