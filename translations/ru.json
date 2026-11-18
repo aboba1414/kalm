@@ -35,6 +35,8 @@
   "status_online_short": "онлайн",
   "status_no_device_selected": "Наушники не выбраны",
   "status_add_or_select": "Добавьте или выберите наушники",
+  "empty_connect_title": "Подключите наушники",
+  "empty_connect_desc": "Убедитесь, что наушники подключены по Bluetooth и вынуты из кейса.",
 
   "batt_left": "Левый",
   "batt_left_full": "Левый наушник",

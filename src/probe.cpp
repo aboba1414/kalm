@@ -163,8 +163,9 @@ bool runRealmeOppoProbe(SocketHandle fd, QTextStream& out) {
         {"GetCapabilities", 0x0100, {}},
         {"GetFirmwareVersion", 0x0105, {}},
         {"GetBattery (0x0106)", 0x0106, {}},
-        {"GetBatteryAlt (0x0107)", 0x0107, {}},
-        {"GetNoiseReduction", 0x010B, {}},
+        {"GetNotifyCaps (0x0200)", 0x0200, {}},
+        {"QueryNoiseNotify (0x0202 [03])", 0x0202, QByteArray("\x03", 1)},
+        {"GetNoiseReduction (0x010B)", 0x010B, {}},
         {"GetSwitchFeatures", 0x010D, QByteArray("\x04\x05\x06\x07", 4)},
         {"GetStatusFeature", 0x0129, QByteArray("\x01\x02\x03\x04", 4)},
     };

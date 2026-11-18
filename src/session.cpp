@@ -300,6 +300,7 @@ bool KalmSession::refresh() {
         for (const QByteArray& pkt : {
                  buildRealmeOppoPacket(kTlCmdGetFirmware, 0, {}),
                  buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}),
+                 buildRealmeOppoPacket(kTlCmdQueryNotify, 0, QByteArray("\x03", 1)),
                  buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}),
                  buildRealmeOppoPacket(kTlCmdGetSwitches, 0, QByteArray("\x04\x05\x06\x07", 4)),
              }) {
@@ -344,8 +345,7 @@ bool KalmSession::setNoiseMode(NoiseMode mode,
             buildRealmeSetNoise(mode, 0),
             [](const RealmeOppoFrame& f) {
                 return (f.command == kTlRespSetNoise && !f.payload.isEmpty() &&
-                        static_cast<uint8_t>(f.payload[0]) == 0) ||
-                       f.command == kTlRespGetNoise;
+                        static_cast<uint8_t>(f.payload[0]) == 0);
             },
             2200);
         if (ack) {
@@ -354,7 +354,6 @@ bool KalmSession::setNoiseMode(NoiseMode mode,
                 m_state.noiseMode = mode;
             }
             emitState();
-            sendRaw(buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
             return true;
         }
         return false;
@@ -626,6 +625,12 @@ void KalmSession::runLoop() {
             for (const QByteArray& pkt : buildRegisterNotifications()) {
                 sendRaw(pkt);
             }
+        } else {
+            // Subscribe to Battery (1), Wear (2), and Noise/ANC (3) live notifications
+            sendRaw(buildRealmeOppoPacket(kTlCmdGetNotifyCaps, 0, {}));
+            for (uint8_t evId : {uint8_t(1), uint8_t(2), uint8_t(3)}) {
+                sendRaw(buildRealmeOppoPacket(kTlCmdRegNotify, 0, QByteArray(1, static_cast<char>(evId))));
+            }
         }
         refresh();
         emitDevices();
@@ -668,14 +673,14 @@ void KalmSession::runLoop() {
             if (pendingEventRefresh && eventDebounceTimer.elapsed() >= 400) {
                 pendingEventRefresh = false;
                 sendRaw(buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
-                sendRaw(buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
+                sendRaw(buildRealmeOppoPacket(kTlCmdQueryNotify, 0, QByteArray("\x03", 1)));
             }
 
             if (pollTimer.elapsed() >= pollIntervalMs) {
                 pollTimer.restart();
                 if (proto == DeviceProtocol::RealmeOppoTl) {
                     sendRaw(buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
-                    sendRaw(buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
+                    sendRaw(buildRealmeOppoPacket(kTlCmdQueryNotify, 0, QByteArray("\x03", 1)));
                 } else {
                     sendRaw(buildQueryBattery());
                     sendRaw(buildQueryWearState(profile));
@@ -1061,6 +1066,7 @@ QJsonObject oneshotStatus(DeviceRegistry& reg, const QString& deviceQuery) {
         if (proto == DeviceProtocol::RealmeOppoTl) {
             sendAll(fd, buildRealmeOppoPacket(kTlCmdGetFirmware, 0, {}));
             sendAll(fd, buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdQueryNotify, 0, QByteArray("\x03", 1)));
             sendAll(fd, buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
             sendAll(fd, buildRealmeOppoPacket(kTlCmdGetSwitches, 0, QByteArray("\x04\x05\x06\x07", 4)));
             QList<uint16_t> seen;
@@ -1068,7 +1074,8 @@ QJsonObject oneshotStatus(DeviceRegistry& reg, const QString& deviceQuery) {
                 fd, rdec, state,
                 [&](const RealmeOppoFrame& f) {
                     if (!seen.contains(f.command)) seen.append(f.command);
-                    return seen.contains(kTlRespGetBattery) && seen.contains(kTlRespGetNoise) &&
+                    return seen.contains(kTlRespGetBattery) &&
+                           (seen.contains(kTlRespQueryNotify) || seen.contains(kTlRespGetNoise)) &&
                            seen.contains(kTlRespGetFirmware);
                 },
                 1200);
@@ -1149,8 +1156,12 @@ QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycl
     return runOneshot(reg, deviceQuery, [&order](SocketHandle fd, DeviceProtocol proto, const WireProfile& profile, EarbudState& state, FrameDecoder& dec, RealmeOppoDecoder& rdec) {
         if (proto == DeviceProtocol::RealmeOppoTl) {
             sendAll(fd, buildRealmeOppoPacket(kTlCmdGetBattery, 0, {}));
+            sendAll(fd, buildRealmeOppoPacket(kTlCmdQueryNotify, 0, QByteArray("\x03", 1)));
             sendAll(fd, buildRealmeOppoPacket(kTlCmdGetNoise, 0, {}));
-            recvUntilRealme(fd, rdec, state, [](const RealmeOppoFrame& f) { return f.command == kTlRespGetNoise; }, 1200);
+            recvUntilRealme(
+                fd, rdec, state,
+                [&](const RealmeOppoFrame&) { return state.noiseMode.has_value(); },
+                1200);
             NoiseMode nxt = order.first();
             if (state.noiseMode) {
                 const qsizetype idx = order.indexOf(*state.noiseMode);

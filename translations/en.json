@@ -35,6 +35,8 @@
   "status_online_short": "online",
   "status_no_device_selected": "No earbuds selected",
   "status_add_or_select": "Add or select earbuds",
+  "empty_connect_title": "Connect your earbuds",
+  "empty_connect_desc": "Make sure your earbuds are connected via Bluetooth and out of the charging case.",
 
   "batt_left": "Left",
   "batt_left_full": "Left earbud",

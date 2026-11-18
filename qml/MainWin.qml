@@ -236,8 +236,56 @@ ApplicationWindow {
                 }
             }
 
+            // ---- Centered Empty State When Disconnected ----
+            Item {
+                visible: !backend.connected
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(320, mainFlick.height - 90)
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - 32, 380)
+                    spacing: 8
+
+                    Label {
+                        text: "🎧"
+                        font.pixelSize: 36
+                        Layout.alignment: Qt.AlignHCenter
+                        opacity: 0.45
+                    }
+
+                    Label {
+                        text: root.i18n.empty_connect_title
+                        font.pixelSize: 20
+                        font.weight: Font.DemiBold
+                        color: root.textPrimary
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    Label {
+                        text: root.i18n.empty_connect_desc
+                        font.pixelSize: 13
+                        color: root.textSecondary
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    Button {
+                        visible: backend.deviceMac.length > 0
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 6
+                        text: root.i18n.action_connect_bt + " (" + backend.deviceName + ")"
+                        onClicked: backend.connectBluetoothDevice(backend.deviceMac)
+                    }
+                }
+            }
+
             // ---- 1. Centered Connection Header Card ----
             Rectangle {
+                visible: backend.connected
                 Layout.fillWidth: true
                 implicitHeight: hdrCol.implicitHeight + 28
                 radius: 12
@@ -289,6 +337,7 @@ ApplicationWindow {
 
             // ---- 2. Battery Grid (Left / Right / Case) ----
             RowLayout {
+                visible: backend.connected
                 Layout.fillWidth: true
                 Layout.topMargin: 10
                 spacing: 10
@@ -339,6 +388,7 @@ ApplicationWindow {
 
             // ---- 3. Noise Control Section ----
             Label {
+                visible: backend.connected
                 text: root.i18n.section_noise
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -349,6 +399,7 @@ ApplicationWindow {
             }
 
             Rectangle {
+                visible: backend.connected
                 Layout.fillWidth: true
                 implicitHeight: noiseCol.implicitHeight + 24
                 radius: 12
@@ -506,7 +557,7 @@ ApplicationWindow {
 
             // ---- 4. Sound & Controls Section (Vivo GAIA) ----
             Label {
-                visible: backend.vivoFeatures
+                visible: backend.connected && backend.vivoFeatures
                 text: root.i18n.section_sound
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -517,7 +568,7 @@ ApplicationWindow {
             }
 
             Rectangle {
-                visible: backend.vivoFeatures
+                visible: backend.connected && backend.vivoFeatures
                 Layout.fillWidth: true
                 implicitHeight: soundCol.implicitHeight + 28
                 radius: 12
@@ -611,6 +662,7 @@ ApplicationWindow {
 
             // ---- 5. My Earbuds Section ----
             Label {
+                visible: backend.connected
                 text: root.i18n.section_devices
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -621,6 +673,7 @@ ApplicationWindow {
             }
 
             Rectangle {
+                visible: backend.connected
                 Layout.fillWidth: true
                 implicitHeight: devsCol.implicitHeight + 28
                 radius: 12
@@ -788,7 +841,7 @@ ApplicationWindow {
 
             // ---- 7. Find Device Section (Vivo GAIA) ----
             Label {
-                visible: backend.vivoFeatures
+                visible: backend.connected && backend.vivoFeatures
                 text: root.i18n.section_find
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -799,7 +852,7 @@ ApplicationWindow {
             }
 
             Rectangle {
-                visible: backend.vivoFeatures
+                visible: backend.connected && backend.vivoFeatures
                 Layout.fillWidth: true
                 implicitHeight: findRow.implicitHeight + 24
                 radius: 12

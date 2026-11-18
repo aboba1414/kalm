@@ -40,19 +40,20 @@ int main() {
     KALM_CHECK(buildRealmeSetNoise(NoiseMode::Off, 0).toHex() == "aa0a00000404000300010101");
     KALM_CHECK(buildRealmeSetNoise(NoiseMode::Transparency, 0).toHex() == "aa0a00000404000300010102");
 
-    // Verify real captured realme Buds T300 frames from Issue #1 + AGENTS.md
+    // Verify real captured realme Buds T300 frames from Issue #1 + AGENTS.md + NotificationCommandManager
     {
         RealmeOppoDecoder rdec;
         const QByteArray t300Stream =
             buildRealmeOppoPacket(0x8105, 7, QByteArray::fromHex("0003312c322c312e312e302e3035342c322c322c312e312e302e3035342c332c322c303232")) +
             buildRealmeOppoPacket(0x8106, 8, QByteArray::fromHex("000301d5025a0300")) +  // L=85% charging(0x80|85=0xD5), R=90%, Case=0%(inactive->stale)
-            buildRealmeOppoPacket(0x810B, 9, QByteArray::fromHex("0002"));               // Transparency (0x02)
+            buildRealmeOppoPacket(0x8202, 9, QByteArray::fromHex("00030101")) +          // QueryNotify(ev=3): Off (0x01)
+            buildRealmeOppoPacket(0x810B, 10, QByteArray::fromHex("0002"));              // 2-byte unsupported stub [00 02] MUST NOT overwrite Off -> Transparency!
 
         QList<RealmeOppoFrame> rframes;
         for (qsizetype i = 0; i < t300Stream.size(); i += 11) {
             rframes.append(rdec.feed(t300Stream.mid(i, 11)));
         }
-        KALM_CHECK(rframes.size() == 3);
+        KALM_CHECK(rframes.size() == 4);
 
         EarbudState rst;
         rst.connected = true;
@@ -63,7 +64,13 @@ int main() {
         KALM_CHECK(rst.leftBattery.level == 85 && rst.leftBattery.charging && !rst.leftBattery.stale);
         KALM_CHECK(rst.rightBattery.level == 90 && !rst.rightBattery.charging && !rst.rightBattery.stale);
         KALM_CHECK(!rst.caseBattery.level.has_value() && rst.caseBattery.stale);
-        KALM_CHECK(rst.noiseMode == NoiseMode::Transparency);
+        KALM_CHECK(rst.noiseMode == NoiseMode::Off);
+
+        // Live stem-squeeze push notification (0x0204, ev=3, ANC=0x08)
+        const auto pushFrames = rdec.feed(buildRealmeOppoPacket(0x0204, 1, QByteArray::fromHex("03010108")));
+        KALM_CHECK(pushFrames.size() == 1);
+        applyRealmeFrameToState(pushFrames[0], rst);
+        KALM_CHECK(rst.noiseMode == NoiseMode::Anc);
     }
 
     const WireProfile air3 = selectProfile(QStringLiteral("vivo TWS Air3 Pro"));

@@ -171,8 +171,56 @@ Kirigami.ApplicationWindow {
             }
         }
 
+        // ---- Centered Empty State When Disconnected ----
+        Item {
+            visible: !backend.connected
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(Kirigami.Units.gridUnit * 16, mainPage.height - Kirigami.Units.gridUnit * 6)
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - Kirigami.Units.largeSpacing * 4, Kirigami.Units.gridUnit * 22)
+                spacing: Kirigami.Units.smallSpacing + 2
+
+                Kirigami.Icon {
+                    source: "audio-headset"
+                    Layout.alignment: Qt.AlignHCenter
+                    implicitWidth: Kirigami.Units.iconSizes.large
+                    implicitHeight: Kirigami.Units.iconSizes.large
+                    opacity: 0.45
+                }
+
+                Kirigami.Heading {
+                    level: 2
+                    text: root.i18n.empty_connect_title
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Controls.Label {
+                    text: root.i18n.empty_connect_desc
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    opacity: 0.65
+                    Layout.fillWidth: true
+                }
+
+                Controls.Button {
+                    visible: backend.deviceMac.length > 0
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: Kirigami.Units.smallSpacing
+                    text: root.i18n.action_connect_bt + " (" + backend.deviceName + ")"
+                    icon.name: "network-bluetooth-activated-symbolic"
+                    onClicked: backend.connectBluetoothDevice(backend.deviceMac)
+                }
+            }
+        }
+
         // ---- Connection Status Header Card (Centered) ----
         FormCard.FormCard {
+            visible: backend.connected
             maximumWidth: root.cardMaxW
             Layout.topMargin: Kirigami.Units.largeSpacing
 
@@ -222,6 +270,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Battery Info Grid (Left / Right / Case) ----
         FormCard.FormGridContainer {
+            visible: backend.connected
             maximumWidth: root.cardMaxW
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.largeSpacing
@@ -244,6 +293,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Primary Section: Noise Cancellation Selector + ANC Level / Transparency Mode ----
         FormCard.FormHeader {
+            visible: backend.connected
             maximumWidth: root.cardMaxW
             title: root.i18n.section_noise
             topPadding: Kirigami.Units.largeSpacing
@@ -251,6 +301,7 @@ Kirigami.ApplicationWindow {
         }
 
         FormCard.FormCard {
+            visible: backend.connected
             maximumWidth: root.cardMaxW
             enabled: backend.connected
 
@@ -419,7 +470,7 @@ Kirigami.ApplicationWindow {
         // ---- Sound & Controls Section (Vivo GAIA) ----
         FormCard.FormHeader {
             maximumWidth: root.cardMaxW
-            visible: backend.vivoFeatures
+            visible: backend.connected && backend.vivoFeatures
             title: root.i18n.section_sound
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
@@ -427,7 +478,7 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormCard {
             maximumWidth: root.cardMaxW
-            visible: backend.vivoFeatures
+            visible: backend.connected && backend.vivoFeatures
             enabled: backend.connected
 
             FormCard.FormComboBoxDelegate {
@@ -497,6 +548,7 @@ Kirigami.ApplicationWindow {
 
         // ---- Saved Earbuds Section (Multi-Device Management) ----
         FormCard.FormHeader {
+            visible: backend.connected
             maximumWidth: root.cardMaxW
             title: root.i18n.section_devices
             topPadding: Kirigami.Units.largeSpacing
@@ -504,6 +556,7 @@ Kirigami.ApplicationWindow {
         }
 
         FormCard.FormCard {
+            visible: backend.connected
             maximumWidth: root.cardMaxW
 
             Repeater {
@@ -635,7 +688,7 @@ Kirigami.ApplicationWindow {
         // ---- Find My Earbuds Section (Vivo GAIA) ----
         FormCard.FormHeader {
             maximumWidth: root.cardMaxW
-            visible: backend.vivoFeatures
+            visible: backend.connected && backend.vivoFeatures
             title: root.i18n.section_find
             topPadding: Kirigami.Units.largeSpacing
             bottomPadding: Kirigami.Units.largeSpacing + 2
@@ -643,7 +696,7 @@ Kirigami.ApplicationWindow {
 
         FormCard.FormCard {
             maximumWidth: root.cardMaxW
-            visible: backend.vivoFeatures
+            visible: backend.connected && backend.vivoFeatures
             enabled: backend.connected
 
             FormCard.FormButtonDelegate {

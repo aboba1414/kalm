@@ -714,6 +714,75 @@ std::optional<NoiseMode> decodeRealmeNoiseValue(uint8_t val) {
     return std::nullopt;
 }
 
+bool parseRealmeBatteryTable(const QByteArray& p, int countOffset, EarbudState& state) {
+    if (countOffset >= p.size()) return false;
+    const int count = static_cast<uint8_t>(p[countOffset]);
+    bool seenL = false, seenR = false, seenC = false;
+    for (int i = 0; i < count; ++i) {
+        const int off = countOffset + 1 + i * 2;
+        if (off + 2 > p.size()) break;
+        const uint8_t compId = static_cast<uint8_t>(p[off]);
+        const uint8_t raw = static_cast<uint8_t>(p[off + 1]);
+        const int lvl = raw & 0x7F;
+        const bool chg = (raw & 0x80) != 0;
+
+        if (compId == 1 && lvl <= 100) {
+            state.leftBattery = BatteryReading{lvl, chg, false};
+            seenL = true;
+        } else if (compId == 2 && lvl <= 100) {
+            state.rightBattery = BatteryReading{lvl, chg, false};
+            seenR = true;
+        } else if (compId == 3) {
+            // Case inactive normalization: 03 00 (level=0, !charging) means case closed/unavailable
+            if (lvl > 0 && lvl <= 100) {
+                state.caseBattery = BatteryReading{lvl, chg, false};
+                seenC = true;
+            } else if (lvl == 0 && chg) {
+                state.caseBattery = BatteryReading{0, true, false};
+                seenC = true;
+            }
+        }
+    }
+    if (!seenL) state.leftBattery = BatteryReading{std::nullopt, false, true};
+    if (!seenR) state.rightBattery = BatteryReading{std::nullopt, false, true};
+    if (!seenC) state.caseBattery = BatteryReading{std::nullopt, false, true};
+    return true;
+}
+
+QString parseRealmeEventBody(int offset, const QByteArray& p, EarbudState& state) {
+    if (offset >= p.size()) return QStringLiteral("ignored");
+    const uint8_t ev = static_cast<uint8_t>(p[offset]);
+    const int dataOff = offset + 1;
+    const int rem = static_cast<int>(p.size()) - dataOff;
+
+    if (ev == 1 && rem >= 1) {
+        return parseRealmeBatteryTable(p, dataOff, state) ? QStringLiteral("battery") : QStringLiteral("ignored");
+    }
+
+    if (ev == 3 && rem >= 2) {
+        // NotificationCommandManager.k(case 3):
+        // rem == 2 -> [type, noiseValue] (action implicitly 1)
+        // rem >= 3 -> [action, type, noiseValue] (action 1 = active ANC mode; action 2 = cycle config)
+        uint8_t action = 1;
+        uint8_t noiseVal = 0;
+        if (rem == 2) {
+            noiseVal = static_cast<uint8_t>(p[dataOff + 1]);
+        } else {
+            action = static_cast<uint8_t>(p[dataOff]);
+            noiseVal = static_cast<uint8_t>(p[dataOff + 2]);
+        }
+        if (action == 1) {
+            if (auto m = decodeRealmeNoiseValue(noiseVal)) {
+                state.noiseMode = *m;
+                return QStringLiteral("noise_mode");
+            }
+        }
+        return QStringLiteral("ignored");
+    }
+
+    return QStringLiteral("event_refresh");
+}
+
 }  // namespace
 
 QByteArray buildRealmeOppoPacket(uint16_t cmd, uint8_t seq, const QByteArray& payload) {
@@ -839,52 +908,38 @@ QString applyRealmeFrameToState(const RealmeOppoFrame& frame, EarbudState& state
     }
 
     if (cmd == kTlRespGetBattery) {
-        // Payload: [status=0x00, count, (compId, rawByte) * count]
         if (p.size() >= 2 && static_cast<uint8_t>(p[0]) == 0) {
-            const int count = static_cast<uint8_t>(p[1]);
-            bool seenL = false, seenR = false, seenC = false;
-            for (int i = 0; i < count; ++i) {
-                const int off = 2 + i * 2;
-                if (off + 2 > p.size()) break;
-                const uint8_t compId = static_cast<uint8_t>(p[off]);
-                const uint8_t raw = static_cast<uint8_t>(p[off + 1]);
-                const int lvl = raw & 0x7F;
-                const bool chg = (raw & 0x80) != 0;
-
-                if (compId == 1 && lvl <= 100) {
-                    state.leftBattery = BatteryReading{lvl, chg, false};
-                    seenL = true;
-                } else if (compId == 2 && lvl <= 100) {
-                    state.rightBattery = BatteryReading{lvl, chg, false};
-                    seenR = true;
-                } else if (compId == 3) {
-                    // Case inactive normalization: 03 00 (level=0, !charging) means case closed/unavailable
-                    if (lvl > 0 && lvl <= 100) {
-                        state.caseBattery = BatteryReading{lvl, chg, false};
-                        seenC = true;
-                    } else if (lvl == 0 && chg) {
-                        state.caseBattery = BatteryReading{0, true, false};
-                        seenC = true;
-                    }
-                }
-            }
-            if (!seenL) state.leftBattery = BatteryReading{std::nullopt, false, true};
-            if (!seenR) state.rightBattery = BatteryReading{std::nullopt, false, true};
-            if (!seenC) state.caseBattery = BatteryReading{std::nullopt, false, true};
-            return QStringLiteral("battery");
+            return parseRealmeBatteryTable(p, 1, state) ? QStringLiteral("battery") : QStringLiteral("ignored");
         }
         return QStringLiteral("ignored");
     }
 
     if (cmd == kTlRespGetNoise) {
-        // Live T300 returns [00, noiseValue]; older models may return [00, action, type, noiseValue]
-        if (p.size() >= 2 && static_cast<uint8_t>(p[0]) == 0) {
-            const uint8_t val = (p.size() >= 4) ? static_cast<uint8_t>(p[3]) : static_cast<uint8_t>(p[1]);
-            if (auto m = decodeRealmeNoiseValue(val)) {
+        // Valid NoiseReductionInfo requires >= 4 bytes: [status=0x00, action=0x01, type, noiseValue].
+        // A 2-byte [00 02] reply is an unsupported-command stub and must NEVER overwrite noiseMode!
+        if (p.size() >= 4 && static_cast<uint8_t>(p[0]) == 0 && static_cast<uint8_t>(p[1]) == 1) {
+            if (auto m = decodeRealmeNoiseValue(static_cast<uint8_t>(p[3]))) {
                 state.noiseMode = *m;
                 return QStringLiteral("noise_mode");
             }
         }
+        return QStringLiteral("ignored");
+    }
+
+    if (cmd == kTlRespQueryNotify) {
+        // 0x8202: response to 0x0202 [eventId] -> [status=0x00, eventId, ...body]
+        if (p.size() >= 2 && static_cast<uint8_t>(p[0]) == 0) {
+            return parseRealmeEventBody(1, p, state);
+        }
+        return QStringLiteral("ignored");
+    }
+
+    if (cmd == kTlCmdPushNotify) {
+        // 0x0204: live push notification from earbuds -> [eventId, ...body]
+        return parseRealmeEventBody(0, p, state);
+    }
+
+    if (cmd == kTlRespGetNotifyCaps || cmd == kTlRespRegNotify) {
         return QStringLiteral("ignored");
     }
 
