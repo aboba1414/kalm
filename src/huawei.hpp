@@ -100,6 +100,7 @@ QByteArray buildDualConnectAction(const QString& mac, bool connect);
 
 struct PacketEffect {
     bool stateChanged = false;
+    bool wearUpdate = false;
     bool dualConnectRow = false;
     int dcCount = 0;
     int dcIndex = 0;

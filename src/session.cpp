@@ -5,6 +5,10 @@
 #include "probe.hpp"
 #include "transport.hpp"
 
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusMessage>
+#include <QDBusVariant>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -77,6 +81,49 @@ std::optional<QJsonObject> ipcRequest(const QJsonObject& payload, int timeoutMs)
     if (err.error != QJsonParseError::NoError || !doc.isObject()) return std::nullopt;
     return doc.object();
 }
+
+
+namespace {
+
+int wornBudCount(const EarbudState& state) {
+    int count = 0;
+    if (state.leftWear == u"worn") ++count;
+    if (state.rightWear == u"worn") ++count;
+    return count;
+}
+
+QString findPlayingMprisPlayer() {
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) return {};
+    const QStringList services = bus.interface()->registeredServiceNames().value();
+    for (const QString& name : services) {
+        if (!name.startsWith(QStringLiteral("org.mpris.MediaPlayer2"))) continue;
+        QDBusMessage msg = QDBusMessage::createMethodCall(
+            name, QStringLiteral("/org/mpris/MediaPlayer2"),
+            QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("Get"));
+        msg << QStringLiteral("org.mpris.MediaPlayer2.Player") << QStringLiteral("PlaybackStatus");
+        const QDBusMessage reply = bus.call(msg, QDBus::Block, 600);
+        if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) continue;
+        const QVariant value = reply.arguments().first();
+        const QVariant inner =
+            value.canConvert<QDBusVariant>() ? value.value<QDBusVariant>().variant() : value;
+        if (inner.toString() == u"Playing") return name;
+    }
+    return {};
+}
+
+bool callMprisPlayer(const QString& service, const QString& method) {
+    if (service.isEmpty()) return false;
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) return false;
+    const QDBusMessage reply = bus.call(
+        QDBusMessage::createMethodCall(service, QStringLiteral("/org/mpris/MediaPlayer2"),
+                                       QStringLiteral("org.mpris.MediaPlayer2.Player"), method),
+        QDBus::Block, 800);
+    return reply.type() == QDBusMessage::ReplyMessage;
+}
+
+}  // namespace
 
 // ---- KalmSession ----
 
@@ -254,6 +301,8 @@ void KalmSession::closeSocket(bool resetIdentity) {
         wasConnected = m_state.connected;
         m_hwDcRows.clear();
         m_hwDcCount = 0;
+        m_mprisPausedByWear = false;
+        m_mprisService.clear();
         if (resetIdentity) {
             m_state = EarbudState{};
         } else {
@@ -910,11 +959,18 @@ void KalmSession::handleFrames(const QList<Frame>& frames) {
 
 void KalmSession::handleHuaweiPackets(const QList<huawei::Packet>& packets) {
     bool changed = false;
+    bool sawWear = false;
+    bool autoPause = false;
+    int wornBefore = 0;
+    int wornAfter = 0;
     {
         QMutexLocker lock(&m_lock);
+        wornBefore = wornBudCount(m_state);
+        autoPause = m_hwProfile.autoPause && m_state.wearDetection.value_or(false);
         for (const auto& packet : packets) {
             const auto effect = huawei::applyPacket(packet, m_state, m_hwProfile);
             if (effect.stateChanged) changed = true;
+            if (effect.wearUpdate) sawWear = true;
             if (!effect.dualConnectRow) continue;
 
             if (effect.dcCount > 0) m_hwDcCount = effect.dcCount;
@@ -929,6 +985,36 @@ void KalmSession::handleHuaweiPackets(const QList<huawei::Packet>& packets) {
                 changed = true;
             }
         }
+        wornAfter = wornBudCount(m_state);
+    }
+
+    // The earbuds do not issue AVRCP pause to a computer, so honour the
+    // device's auto-pause setting ourselves: a bud leaving the ear pauses the
+    // active MPRIS player, putting it back resumes it.
+    bool shouldPause = false;
+    bool shouldResume = false;
+    QString resumeService;
+    {
+        QMutexLocker lock(&m_lock);
+        if (sawWear && autoPause && wornAfter < wornBefore) {
+            shouldPause = !m_mprisPausedByWear;
+        } else if (sawWear && autoPause && wornAfter > wornBefore && m_mprisPausedByWear) {
+            shouldResume = true;
+            resumeService = m_mprisService;
+        }
+    }
+    if (shouldPause) {
+        const QString service = findPlayingMprisPlayer();
+        if (!service.isEmpty() && callMprisPlayer(service, QStringLiteral("Pause"))) {
+            QMutexLocker lock(&m_lock);
+            m_mprisPausedByWear = true;
+            m_mprisService = service;
+        }
+    } else if (shouldResume) {
+        callMprisPlayer(resumeService, QStringLiteral("Play"));
+        QMutexLocker lock(&m_lock);
+        m_mprisPausedByWear = false;
+        m_mprisService.clear();
     }
 
     QList<std::shared_ptr<HuaweiWaiter>> activeWaiters;

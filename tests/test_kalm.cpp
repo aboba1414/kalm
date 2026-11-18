@@ -167,6 +167,22 @@ int main() {
         KALM_CHECK(dcEffect.dcDevice.name == "Ueban");
         KALM_CHECK(dcEffect.dcDevice.connected());
 
+        // Wear notifications (2b25): param 1 = right earbud, param 2 = left.
+        const auto wearIn = decoder.feed(
+            QByteArray::fromHex("5a000f002b25010101020101030100040100e11b"));
+        KALM_CHECK(wearIn.size() == 1);
+        const auto wearEffect = hw::applyPacket(wearIn.first(), st, profile);
+        KALM_CHECK(wearEffect.wearUpdate);
+        KALM_CHECK(st.leftWear == u"worn");
+        KALM_CHECK(st.rightWear == u"worn");
+
+        const auto leftOut = decoder.feed(
+            QByteArray::fromHex("5a000f002b25010101020100030100040100597a"));
+        KALM_CHECK(leftOut.size() == 1);
+        hw::applyPacket(leftOut.first(), st, profile);
+        KALM_CHECK(st.leftWear == u"in_case");
+        KALM_CHECK(st.rightWear == u"worn");
+
         // Garbage before a valid packet must be skipped by the resync logic.
         hw::Decoder noisy;
         const auto resynced = noisy.feed(QByteArray("garbage") +

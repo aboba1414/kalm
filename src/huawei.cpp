@@ -349,6 +349,30 @@ PacketEffect applyPacket(const Packet& packet, EarbudState& state,
         return effect;
     }
 
+    // FreeBuds 6i reports the per-earbud wear state in 2b25 (param 1 = right,
+    // param 2 = left, 1 = in ear) instead of the legacy 2b03 notification.
+    if (packet.command == QByteArray::fromHex("2b25")) {
+        const QByteArray right = packet.param(1);
+        const QByteArray left = packet.param(2);
+        auto wearText = [](const QByteArray& raw) -> QString {
+            if (raw.size() != 1) return {};
+            return static_cast<uint8_t>(raw.at(0)) != 0 ? QStringLiteral("worn")
+                                                        : QStringLiteral("in_case");
+        };
+        bool changed = false;
+        if (left.size() == 1) {
+            state.leftWear = wearText(left);
+            changed = true;
+        }
+        if (right.size() == 1) {
+            state.rightWear = wearText(right);
+            changed = true;
+        }
+        effect.wearUpdate = changed;
+        effect.stateChanged = changed;
+        return effect;
+    }
+
     if (packet.command == QByteArray::fromHex("2b03")) {
         const QByteArray left = packet.param(8);
         const QByteArray right = packet.param(9);

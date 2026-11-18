@@ -143,6 +143,8 @@ private:
 
     DeviceProtocol m_protocol = DeviceProtocol::Gaia;
     QString m_modelName;
+    bool m_mprisPausedByWear = false;
+    QString m_mprisService;
     huawei::ModelProfile m_hwProfile;
     QMap<int, MultiConnectDevice> m_hwDcRows;
     int m_hwDcCount = 0;
