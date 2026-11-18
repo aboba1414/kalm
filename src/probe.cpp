@@ -5,15 +5,20 @@
 #include "transport.hpp"
 
 #include <QElapsedTimer>
+#include <QSet>
 #include <QTextStream>
 
 #include <algorithm>
-#include <poll.h>
-#include <sys/socket.h>
+#include <vector>
 
 namespace kalm {
 
 namespace {
+
+constexpr const char* kRealmeOppoTlUuid = "0000079a-d102-11e1-9b23-00025b00a5a5";
+constexpr const char* kOppoHeyMelodyUuid = "db764ac8-4b08-7f25-aafe-59d03c27bae3";
+constexpr const char* kOppoHeyMelodyAltUuid = "db764ac8-4b08-7f25-aafe-59d03c27bae4";
+constexpr const char* kStandardSppUuid = "00001101-0000-1000-8000-00805f9b34fb";
 
 QString hexSpaced(const QByteArray& bytes) {
     if (bytes.isEmpty()) return QStringLiteral("(empty)");
@@ -25,7 +30,56 @@ QString hexSpaced(const QByteArray& bytes) {
     return out.join(u' ');
 }
 
-QString formatFrameSummary(const Frame& f) {
+bool isNonRfcommStandardUuid(const QString& low) {
+    // Standard Bluetooth SIG audio / BLE GATT / PnP / SDP UUIDs (...-0000-1000-8000-00805f9b34fb)
+    // EXCEPT 00001101 (Serial Port Profile / SPP), which IS RFCOMM!
+    if (!low.endsWith(u"-0000-1000-8000-00805f9b34fb")) return false;
+    return low != QLatin1String(kStandardSppUuid);
+}
+
+QStringList buildCandidateControlUuids(const QStringList& devUuids) {
+    QStringList prioritized;
+    QStringList customOthers;
+    bool hasSpp = false;
+
+    for (const QString& raw : devUuids) {
+        const QString low = raw.trimmed().toLower();
+        if (low.isEmpty() || isNonRfcommStandardUuid(low)) continue;
+        if (low == QLatin1String(kStandardSppUuid)) {
+            hasSpp = true;
+        } else if (low == QLatin1String(kVivoGaiaUuid) ||
+                   low == QLatin1String(kRealmeOppoTlUuid) ||
+                   low == QLatin1String(kOppoHeyMelodyUuid) ||
+                   low == QLatin1String(kOppoHeyMelodyAltUuid)) {
+            if (!prioritized.contains(low)) prioritized.append(low);
+        } else if (low != QLatin1String(kGattServiceUuid)) {
+            if (!customOthers.contains(low)) customOthers.append(low);
+        }
+    }
+
+    QStringList result = prioritized;
+    result.append(customOthers);
+    if (hasSpp) result.append(QString::fromLatin1(kStandardSppUuid));
+    return result;
+}
+
+QByteArray drainRawBytes(SocketHandle fd, int waitMs) {
+    QByteArray out;
+    QElapsedTimer t;
+    t.start();
+    char buf[2048];
+    while (t.elapsed() < waitMs) {
+        const int rem = std::max(20, static_cast<int>(waitMs - t.elapsed()));
+        const int pr = pollSocketRead(fd, rem);
+        if (pr <= 0) break;
+        const qint64 n = recvSocket(fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        out.append(buf, static_cast<qsizetype>(n));
+    }
+    return out;
+}
+
+QString formatVivoFrameSummary(const Frame& f) {
     if (f.vendor == kVivoVendor && f.command == kCmdReportMultiConnect) {
         if (f.payload.size() >= 2) {
             return QStringLiteral("v=%1 cmd=0x8249 status=0x%2 count=%3 (hosts redacted)")
@@ -49,22 +103,17 @@ QString formatFrameSummary(const Frame& f) {
         .arg(hexSpaced(f.payload));
 }
 
-QList<Frame> drainFrames(int fd, FrameDecoder& dec, int waitMs) {
-    QList<Frame> out;
-    QElapsedTimer t;
-    t.start();
-    char buf[2048];
-    while (t.elapsed() < waitMs) {
-        const int rem = std::max(20, static_cast<int>(waitMs - t.elapsed()));
-        pollfd pfd{fd, POLLIN, 0};
-        const int pr = ::poll(&pfd, 1, rem);
-        if (pr <= 0) break;
-        if (pfd.revents & (POLLERR | POLLHUP)) break;
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) break;
-        out.append(dec.feed(QByteArray(buf, n)));
+QString formatRealmeOppoFrameSummary(const RealmeOppoFrame& f) {
+    // 0x8112 = MultiConnect host list response -> redact host MACs/names
+    if (f.command == 0x8112) {
+        return QStringLiteral("cmd=0x8112 seq=%1 (multipoint hosts redacted, len=%2)")
+            .arg(f.seq)
+            .arg(f.payload.size());
     }
-    return out;
+    return QStringLiteral("cmd=0x%1 seq=%2 payload=[%3]")
+        .arg(f.command, 4, 16, QLatin1Char('0'))
+        .arg(f.seq)
+        .arg(hexSpaced(f.payload));
 }
 
 std::optional<BluezDevice> pickProbeDevice(DeviceRegistry& reg, const QString& query) {
@@ -93,7 +142,6 @@ std::optional<BluezDevice> pickProbeDevice(DeviceRegistry& reg, const QString& q
             if (b->connected) return b;
         }
     }
-    // Prefer any connected vivo/iQOO or audio headset
     for (const auto& b : all) {
         if (b.connected && b.isVivoTws()) return b;
     }
@@ -109,64 +157,81 @@ std::optional<BluezDevice> pickProbeDevice(DeviceRegistry& reg, const QString& q
     return std::nullopt;
 }
 
-}  // namespace
+bool runRealmeOppoProbe(SocketHandle fd, QTextStream& out) {
+    struct TlSpec {
+        const char* label;
+        uint16_t cmd;
+        QByteArray payload;
+    };
 
-QString maskMacForReport(const QString& mac) {
-    const QStringList parts = mac.trimmed().toUpper().split(u':');
-    if (parts.size() == 6) {
-        return QStringLiteral("%1:%2:%3:XX:XX:XX").arg(parts[0], parts[1], parts[2]);
+    const std::vector<TlSpec> specs = {
+        {"GetCapabilities", 0x0100, {}},
+        {"SetMTU(512)", 0x0101, QByteArray("\x00\x02", 2)},
+        {"InitVendor(0x079A)", 0x0102, QByteArray("\x9a\x07", 2)},
+        {"InitQuery", 0x0103, {}},
+        {"GetFirmwareVersion", 0x0105, {}},
+        {"GetBattery", 0x0107, {}},
+        {"GetNoiseReduction", 0x010B, {}},
+        {"GetSwitchFeatures", 0x010D, QByteArray("\x04\x05\x06\x07", 4)},
+        {"GetStatusFeature", 0x0129, QByteArray("\x01\x02\x03\x04", 4)},
+    };
+
+    // Quick test with first 2 commands before running all 9
+    sendAll(fd, buildRealmeOppoPacket(specs[0].cmd, 1, specs[0].payload));
+    QByteArray firstRx = drainRawBytes(fd, 350);
+    if (firstRx.isEmpty()) {
+        sendAll(fd, buildRealmeOppoPacket(specs[2].cmd, 2, specs[2].payload));
+        firstRx = drainRawBytes(fd, 350);
     }
-    return QStringLiteral("XX:XX:XX:XX:XX:XX");
+    if (firstRx.isEmpty()) {
+        return false;
+    }
+
+    out << "\n### OPPO / OnePlus / realme Link (`0xAA` Protocol) Probe\n";
+    uint8_t seq = 3;
+    // Log initial reply
+    const auto initParsed = parseRealmeOppoFrames(firstRx);
+    if (!initParsed.isEmpty()) {
+        for (const auto& f : initParsed) {
+            out << "- Initial reply: `" << formatRealmeOppoFrameSummary(f) << "`\n";
+        }
+    } else {
+        out << "- Initial raw reply: `[" << hexSpaced(firstRx) << "]`\n";
+    }
+
+    for (const auto& sp : specs) {
+        sendAll(fd, buildRealmeOppoPacket(sp.cmd, seq++, sp.payload));
+        const QByteArray rx = drainRawBytes(fd, 240);
+        if (rx.isEmpty()) {
+            out << "  - `" << QStringLiteral("0x%1").arg(sp.cmd, 4, 16, QLatin1Char('0'))
+                << "` " << sp.label << ": *(no reply)*\n";
+            continue;
+        }
+        const auto frames = parseRealmeOppoFrames(rx);
+        if (!frames.isEmpty()) {
+            QStringList summaries;
+            for (const auto& f : frames) summaries.append(formatRealmeOppoFrameSummary(f));
+            out << "  - `" << QStringLiteral("0x%1").arg(sp.cmd, 4, 16, QLatin1Char('0'))
+                << "` " << sp.label << ": `" << summaries.join(QStringLiteral(" | ")) << "`\n";
+        } else {
+            out << "  - `" << QStringLiteral("0x%1").arg(sp.cmd, 4, 16, QLatin1Char('0'))
+                << "` " << sp.label << ": raw `[" << hexSpaced(rx) << "]`\n";
+        }
+    }
+    return true;
 }
 
-QString generateDiagnosticReport(DeviceRegistry& registry,
-                                 const QString& deviceQuery,
-                                 int listenSeconds) {
-    QString report;
-    QTextStream out(&report);
-
-    const auto devOpt = pickProbeDevice(registry, deviceQuery);
-    if (!devOpt) {
-        out << "### Kalm Diagnostic Report\n"
-            << "- **Error:** No matching Bluetooth audio device found in BlueZ.\n";
-        return report;
-    }
-
-    const BluezDevice& dev = *devOpt;
-    out << "### BlueZ Device Info\n"
-        << "- **Name:** `" << dev.name << "`\n"
-        << "- **MAC (OUI):** `" << maskMacForReport(dev.mac) << "`\n"
-        << "- **Modalias:** `" << (dev.modalias.isEmpty() ? QStringLiteral("n/a") : dev.modalias) << "`\n"
-        << "- **Icon:** `" << (dev.icon.isEmpty() ? QStringLiteral("n/a") : dev.icon) << "`\n"
-        << "- **Connected / Paired:** `" << (dev.connected ? "true" : "false")
-        << "` / `" << (dev.paired ? "true" : "false") << "`\n";
-    if (dev.batteryPct) {
-        out << "- **BlueZ Battery:** `" << *dev.batteryPct << "%`\n";
-    }
-    out << "- **UUIDs (" << dev.uuids.size() << "):**\n";
-    for (const QString& u : dev.uuids) {
-        out << "  - `" << u << "`\n";
-    }
-
-    out << "\n### GAIA RFCOMM Probe (Read-Only)\n";
-    if (!dev.connected) {
-        out << "- **Result:** Skipped (device is not currently connected via Bluetooth).\n";
-        return report;
-    }
-
-    RfcommConnection conn;
-    try {
-        conn = openGaiaRfcomm(dev.mac, dev.path, dev.name, 2500);
-    } catch (const std::exception& ex) {
-        out << "- **RFCOMM GAIA Connection:** Failed (`" << QString::fromUtf8(ex.what()) << "`)\n";
-        return report;
-    }
-
-    const int peerChannel = getRfcommPeerChannel(conn.fd.get());
-    out << "- **Connected RFCOMM Channel:** `" << peerChannel << "`\n";
-
+bool runVivoGaiaProbe(SocketHandle fd, QTextStream& out) {
+    if (!sendAll(fd, buildHandshake())) return false;
     FrameDecoder dec;
+    const QByteArray hsRaw = drainRawBytes(fd, 450);
+    if (hsRaw.isEmpty()) return false;
+
+    const auto hsFrames = dec.feed(hsRaw);
+    bool gotGaiaHs = false;
+    QString hsSummary;
     QString detectedFw;
+
     auto recordTelemetryFw = [&](const QList<Frame>& list) {
         for (const Frame& f : list) {
             if (f.vendor == kVivoVendor && f.command == kCmdReportTelemetry) {
@@ -177,21 +242,26 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
         }
     };
 
-    if (!conn.initialBytes.isEmpty()) {
-        const auto initFrames = dec.feed(conn.initialBytes);
-        recordTelemetryFw(initFrames);
-        for (const Frame& f : initFrames) {
-            if (f.vendor == kGaiaVendor && f.command == kCmdHandshakeResp) {
-                out << "- **Handshake (`0x0300`):** `" << formatFrameSummary(f) << "`\n";
-            }
+    recordTelemetryFw(hsFrames);
+    for (const Frame& f : hsFrames) {
+        if (f.vendor == kGaiaVendor && f.command == kCmdHandshakeResp) {
+            gotGaiaHs = true;
+            hsSummary = formatVivoFrameSummary(f);
+            break;
         }
     }
-
-    // Send notification registration chain
-    for (const QByteArray& pkt : buildRegisterNotifications()) {
-        sendAll(conn.fd.get(), pkt);
+    if (!gotGaiaHs) {
+        out << "- Non-GAIA reply to `0x0300`: `[" << hexSpaced(hsRaw) << "]`\n";
+        return false;
     }
-    recordTelemetryFw(drainFrames(conn.fd.get(), dec, 350));
+
+    out << "\n### Vivo / iQOO Compact GAIA Probe\n"
+        << "- **Handshake (`0x0300`):** `" << hsSummary << "`\n";
+
+    for (const QByteArray& pkt : buildRegisterNotifications()) {
+        sendAll(fd, pkt);
+    }
+    recordTelemetryFw(dec.feed(drainRawBytes(fd, 350)));
 
     struct ProbeSpec {
         const char* label;
@@ -223,13 +293,13 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
 
     out << "- **Command Probes:**\n";
     for (const auto& sp : specs) {
-        sendAll(conn.fd.get(), encodeFrame(sp.ver, kVivoVendor, sp.cmd, sp.payload));
-        const auto got = drainFrames(conn.fd.get(), dec, 220);
+        sendAll(fd, encodeFrame(sp.ver, kVivoVendor, sp.cmd, sp.payload));
+        const auto got = dec.feed(drainRawBytes(fd, 220));
         recordTelemetryFw(got);
         QString matchedStr;
         for (const Frame& f : got) {
             if (f.vendor == kVivoVendor && f.command == sp.expectedResp) {
-                matchedStr = formatFrameSummary(f);
+                matchedStr = formatVivoFrameSummary(f);
                 break;
             }
         }
@@ -242,29 +312,263 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
     if (!detectedFw.isEmpty()) {
         out << "- **Telemetry Firmware (`0x8224`):** `" << detectedFw << "`\n";
     }
+    return true;
+}
 
+bool runAirohaRaceProbe(SocketHandle fd, QTextStream& out) {
+    // Airoha RACE read-only battery query: 05 5A 03 00 D6 0C 00
+    const QByteArray raceBatt = QByteArray::fromHex("055a0300d60c00");
+    sendAll(fd, raceBatt);
+    const QByteArray rx = drainRawBytes(fd, 350);
+    if (rx.isEmpty()) return false;
+    out << "\n### Airoha RACE (`0x05 0x5A`) Probe\n"
+        << "- `0x0CD6` TwsGetBattery reply: `[" << hexSpaced(rx) << "]`\n";
+    return true;
+}
+
+}  // namespace
+
+QString maskMacForReport(const QString& mac) {
+    const QStringList parts = mac.trimmed().toUpper().split(u':');
+    if (parts.size() == 6) {
+        return QStringLiteral("%1:%2:%3:XX:XX:XX").arg(parts[0], parts[1], parts[2]);
+    }
+    return QStringLiteral("XX:XX:XX:XX:XX:XX");
+}
+
+QByteArray buildRealmeOppoPacket(uint16_t cmd, uint8_t seq, const QByteArray& payload) {
+    // Inner Packet (5-byte little-endian header + payload)
+    QByteArray inner(5 + payload.size(), Qt::Uninitialized);
+    inner[0] = static_cast<char>(cmd & 0xFF);
+    inner[1] = static_cast<char>((cmd >> 8) & 0xFF);
+    inner[2] = static_cast<char>(seq);
+    inner[3] = static_cast<char>(payload.size() & 0xFF);
+    inner[4] = static_cast<char>((payload.size() >> 8) & 0xFF);
+    if (!payload.isEmpty()) {
+        std::memcpy(inner.data() + 5, payload.constData(), static_cast<size_t>(payload.size()));
+    }
+
+    // Outer OPPOv1Wrapper single-frame wrapper: [0xAA, uleb128(inner.size() + 2), 0x00, 0x00, inner...]
+    const int linkLen = static_cast<int>(inner.size()) + 2;
+    QByteArray out;
+    out.reserve(4 + inner.size());
+    out.append(static_cast<char>(0xAA));
+    if (linkLen <= 127) {
+        out.append(static_cast<char>(linkLen & 0x7F));
+    } else {
+        out.append(static_cast<char>((linkLen & 0x7F) | 0x80));
+        out.append(static_cast<char>((linkLen >> 7) & 0x7F));
+    }
+    out.append('\x00');
+    out.append('\x00');
+    out.append(inner);
+    return out;
+}
+
+QList<RealmeOppoFrame> parseRealmeOppoFrames(const QByteArray& data) {
+    QList<RealmeOppoFrame> frames;
+    qsizetype pos = 0;
+    while (pos < data.size()) {
+        if (static_cast<uint8_t>(data[pos]) != 0xAA) {
+            ++pos;
+            continue;
+        }
+        if (pos + 4 > data.size()) break;
+        int linkLen = 0;
+        int lenBytes = 0;
+        if ((static_cast<uint8_t>(data[pos + 1]) & 0x80) == 0) {
+            linkLen = static_cast<uint8_t>(data[pos + 1]) & 0x7F;
+            lenBytes = 1;
+        } else {
+            if (pos + 5 > data.size()) break;
+            linkLen = (static_cast<uint8_t>(data[pos + 1]) & 0x7F) |
+                      ((static_cast<int>(static_cast<uint8_t>(data[pos + 2])) & 0x7F) << 7);
+            lenBytes = 2;
+        }
+
+        const qsizetype totalLen = 1 + lenBytes + linkLen;
+        if (totalLen < 9 || pos + totalLen > data.size()) break;
+
+        const uint8_t fsnFlags = static_cast<uint8_t>(data[pos + 1 + lenBytes]) & 0x03;
+        const qsizetype innerOffset = pos + 1 + lenBytes + ((fsnFlags == 0) ? 2 : 3);
+        const qsizetype innerLen = (pos + totalLen) - innerOffset;
+        if (innerLen >= 5) {
+            const uint16_t cmd = static_cast<uint8_t>(data[innerOffset]) |
+                                 (static_cast<uint16_t>(static_cast<uint8_t>(data[innerOffset + 1])) << 8);
+            const uint8_t seq = static_cast<uint8_t>(data[innerOffset + 2]);
+            const uint16_t dlen = static_cast<uint8_t>(data[innerOffset + 3]) |
+                                  (static_cast<uint16_t>(static_cast<uint8_t>(data[innerOffset + 4])) << 8);
+            const qsizetype avail = std::min<qsizetype>(dlen, innerLen - 5);
+            RealmeOppoFrame f;
+            f.command = cmd;
+            f.seq = seq;
+            f.payload = data.mid(innerOffset + 5, avail);
+            f.raw = data.mid(pos, totalLen);
+            frames.append(std::move(f));
+        }
+        pos += totalLen;
+    }
+    return frames;
+}
+
+QString generateDiagnosticReport(DeviceRegistry& registry,
+                                 const QString& deviceQuery,
+                                 int listenSeconds) {
+    QString report;
+    QTextStream out(&report);
+
+    const auto devOpt = pickProbeDevice(registry, deviceQuery);
+    if (!devOpt) {
+        out << "### Kalm Diagnostic Report\n"
+            << "- **Error:** No matching Bluetooth audio device found.\n";
+        return report;
+    }
+
+    const BluezDevice& dev = *devOpt;
+    const QString maskedMac = maskMacForReport(dev.mac);
+
+    out << "### Bluetooth Device Info\n"
+        << "- **Name:** `" << dev.name << "`\n"
+        << "- **MAC (OUI):** `" << maskedMac << "`\n"
+        << "- **Modalias:** `" << (dev.modalias.isEmpty() ? QStringLiteral("n/a") : dev.modalias) << "`\n"
+        << "- **Icon:** `" << (dev.icon.isEmpty() ? QStringLiteral("n/a") : dev.icon) << "`\n"
+        << "- **Connected / Paired:** `" << (dev.connected ? "true" : "false")
+        << "` / `" << (dev.paired ? "true" : "false") << "`\n";
+    if (dev.batteryPct) {
+        out << "- **OS Battery:** `" << *dev.batteryPct << "%`\n";
+    }
+    out << "- **UUIDs (" << dev.uuids.size() << "):**\n";
+    for (const QString& u : dev.uuids) {
+        out << "  - `" << u << "`\n";
+    }
+
+    out << "\n### RFCOMM Transport Discovery\n";
+    if (!dev.connected) {
+        out << "- **Result:** Skipped (device is not currently connected via Bluetooth).\n";
+        return report;
+    }
+
+    UniqueSocket sock;
+    QString connectedVia;
+    const QStringList candUuids = buildCandidateControlUuids(dev.uuids);
+    for (const QString& u : candUuids) {
+        sock = openRfcommByUuid(dev.mac, dev.path, u, 2500);
+        if (sock) {
+            const int ch = getRfcommPeerChannel(sock.get());
+            connectedVia = QStringLiteral("UUID `%1` (channel %2)").arg(u).arg(ch);
+            break;
+        } else {
+            out << "- UUID `" << u << "`: *(connection refused / not open)*\n";
+        }
+    }
+
+    if (!sock) {
+        constexpr int kScanChannels[] = {15, 13, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16};
+        for (int ch : kScanChannels) {
+            sock = openRfcommByChannel(dev.mac, ch, 900);
+            if (sock) {
+                connectedVia = QStringLiteral("RFCOMM channel `%1` (direct scan)").arg(ch);
+                break;
+            }
+        }
+    }
+
+    if (!sock) {
+        out << "- **Result:** Could not open any RFCOMM control channel (device may use BLE GATT only or require wake-up).\n";
+        report.replace(dev.mac, maskedMac, Qt::CaseInsensitive);
+        return report;
+    }
+
+    out << "- **Connected Control Channel:** " << connectedVia << "\n";
+
+    // 1. Check for spontaneous greeting bytes upon connect (redacting known multipoint frames)
+    const QByteArray greeting = drainRawBytes(sock.get(), 250);
+    if (!greeting.isEmpty()) {
+        FrameDecoder gDec;
+        const auto gVivo = gDec.feed(greeting);
+        const auto gTl = parseRealmeOppoFrames(greeting);
+        if (!gVivo.isEmpty()) {
+            QStringList items;
+            for (const auto& f : gVivo) items.append(formatVivoFrameSummary(f));
+            out << "- **Passive Greeting (Vivo):** `" << items.join(QStringLiteral(" | ")) << "`\n";
+        } else if (!gTl.isEmpty()) {
+            QStringList items;
+            for (const auto& f : gTl) items.append(formatRealmeOppoFrameSummary(f));
+            out << "- **Passive Greeting (OPPO/realme):** `" << items.join(QStringLiteral(" | ")) << "`\n";
+        } else {
+            out << "- **Passive Greeting (" << greeting.size() << "B):** `[" << hexSpaced(greeting) << "]`\n";
+        }
+    }
+
+    // 2. Choose probe order based on advertised UUIDs / brand name
+    const QString lowName = dev.name.toLower();
+    const bool looksLikeOppoRealme =
+        candUuids.contains(QLatin1String(kRealmeOppoTlUuid)) ||
+        candUuids.contains(QLatin1String(kOppoHeyMelodyUuid)) ||
+        lowName.contains(u"realme") || lowName.contains(u"oppo") || lowName.contains(u"oneplus");
+
+    bool matchedAny = false;
+    if (looksLikeOppoRealme) {
+        matchedAny = runRealmeOppoProbe(sock.get(), out);
+        if (!matchedAny) matchedAny = runVivoGaiaProbe(sock.get(), out);
+        if (!matchedAny) matchedAny = runAirohaRaceProbe(sock.get(), out);
+    } else {
+        matchedAny = runVivoGaiaProbe(sock.get(), out);
+        if (!matchedAny) matchedAny = runRealmeOppoProbe(sock.get(), out);
+        if (!matchedAny) matchedAny = runAirohaRaceProbe(sock.get(), out);
+    }
+
+    if (!matchedAny) {
+        out << "- **Auto-Probe:** Channel is open, but did not respond to Vivo GAIA (`0xFF`), OPPO/realme (`0xAA`), or Airoha RACE (`0x05 0x5A`). Run `kalm probe --listen 15` while toggling ANC on the earbuds to capture raw frames!\n";
+    }
+
+    // 3. Universal Live Event Listener (--listen <sec>)
     if (listenSeconds > 0) {
         out << "\n### Live Event Capture (" << listenSeconds << "s)\n";
+        FrameDecoder vivoDec;
         QElapsedTimer listenTimer;
         listenTimer.start();
         const qint64 totalMs = static_cast<qint64>(listenSeconds) * 1000;
         int capturedCount = 0;
+
         while (listenTimer.elapsed() < totalMs) {
-            const auto got = drainFrames(conn.fd.get(), dec, 300);
-            recordTelemetryFw(got);
-            for (const Frame& f : got) {
-                if (f.vendor == kVivoVendor && f.command == kCmdReportTelemetry) continue;
-                ++capturedCount;
-                const double sec = static_cast<double>(listenTimer.elapsed()) / 1000.0;
-                out << "- `[+" << QString::number(sec, 'f', 1) << "s]` `"
-                    << formatFrameSummary(f) << "`\n";
+            const QByteArray chunk = drainRawBytes(sock.get(), 300);
+            if (chunk.isEmpty()) continue;
+
+            const double sec = static_cast<double>(listenTimer.elapsed()) / 1000.0;
+            const auto tlFrames = parseRealmeOppoFrames(chunk);
+            if (!tlFrames.isEmpty()) {
+                for (const auto& f : tlFrames) {
+                    ++capturedCount;
+                    out << "- `[+" << QString::number(sec, 'f', 1) << "s]` OPPO/realme: `"
+                        << formatRealmeOppoFrameSummary(f) << "`\n";
+                }
+                continue;
             }
+
+            const auto vivoFrames = vivoDec.feed(chunk);
+            if (!vivoFrames.isEmpty()) {
+                for (const Frame& f : vivoFrames) {
+                    if (f.vendor == kVivoVendor && f.command == kCmdReportTelemetry) continue;
+                    ++capturedCount;
+                    out << "- `[+" << QString::number(sec, 'f', 1) << "s]` Vivo GAIA: `"
+                        << formatVivoFrameSummary(f) << "`\n";
+                }
+                continue;
+            }
+
+            ++capturedCount;
+            out << "- `[+" << QString::number(sec, 'f', 1) << "s]` Raw (" << chunk.size()
+                << "B): `[" << hexSpaced(chunk) << "]`\n";
         }
+
         if (capturedCount == 0) {
             out << "- *(No interactive events received during listen window)*\n";
         }
     }
 
+    // Ensure full MAC is never leaked anywhere in the output
+    report.replace(dev.mac, maskedMac, Qt::CaseInsensitive);
     return report;
 }
 

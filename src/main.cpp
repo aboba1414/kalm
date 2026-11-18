@@ -18,19 +18,32 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QSet>
-#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QTimer>
 #include <QUrl>
 
 #include <csignal>
+#include <cstdio>
 #include <iostream>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <QSocketNotifier>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
+#ifndef _WIN32
 int g_sigPair[2] = {-1, -1};
 
 void handleUnixSignal(int) {
@@ -40,8 +53,16 @@ void handleUnixSignal(int) {
         (void)unused;
     }
 }
+#endif
 
 void notifyDesktop(const QString& title, const QString& body) {
+#ifdef _WIN32
+    kalm::ipcRequest(
+        QJsonObject{{QStringLiteral("cmd"), QStringLiteral("notify")},
+                    {QStringLiteral("title"), title},
+                    {QStringLiteral("body"), body}},
+        500);
+#else
     const QString exe = QStandardPaths::findExecutable(QStringLiteral("notify-send"));
     if (exe.isEmpty()) return;
     QProcess::startDetached(exe, {
@@ -54,6 +75,7 @@ void notifyDesktop(const QString& title, const QString& body) {
                                      title,
                                      body,
                                  });
+#endif
 }
 
 QString formatBattCli(const QJsonValue& levelVal, bool charging, bool stale) {
@@ -214,7 +236,11 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     }
 
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+#ifdef _WIN32
+        qputenv("QT_QUICK_CONTROLS_STYLE", "FluentWinUI3");
+#else
         qputenv("QT_QUICK_CONTROLS_STYLE", "org.kde.desktop");
+#endif
     }
 
     QApplication app(argc, argv);
@@ -255,15 +281,25 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     backendPtr = &backend;
 
     kalm::KalmTrayController tray(session, backend);
-    kalm::IpcServer ipc(session, [&](const QString& token) { backend.pushShowFromWorker(token); });
+    kalm::IpcServer ipc(
+        session,
+        [&](const QString& token) { backend.pushShowFromWorker(token); },
+        [&](const QString& title, const QString& body) { tray.showToast(title, body); });
     ipc.start();
     session.start();
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
-    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+#ifdef _WIN32
+    engine.load(QUrl(QStringLiteral("qrc:/qml/MainWin.qml")));
+#else
+    const QUrl qmlUrl = !qEnvironmentVariableIsEmpty("KALM_WIN_UI")
+                            ? QUrl(QStringLiteral("qrc:/qml/MainWin.qml"))
+                            : QUrl(QStringLiteral("qrc:/qml/Main.qml"));
+    engine.load(qmlUrl);
+#endif
     if (engine.rootObjects().isEmpty()) {
-        std::cerr << "Failed to load Kirigami QML interface.\n";
+        std::cerr << "Failed to load QML interface.\n";
         ipc.stop();
         session.stop();
         return 1;
@@ -280,6 +316,7 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
     QObject::connect(&btTimer, &QTimer::timeout, &backend, &kalm::KalmBackend::refreshSavedDevicesAsync);
     btTimer.start();
 
+#ifndef _WIN32
     kalm::UniqueFd sigWriteFd;
     kalm::UniqueFd sigReadFd;
     std::unique_ptr<QSocketNotifier> sigNotifier;
@@ -297,13 +334,16 @@ int launchGui(const QString& targetDevice, bool startMinimized, const QString& l
         std::signal(SIGINT, handleUnixSignal);
         std::signal(SIGTERM, handleUnixSignal);
     }
+#endif
 
     const int rc = app.exec();
+#ifndef _WIN32
     std::signal(SIGINT, SIG_DFL);
     std::signal(SIGTERM, SIG_DFL);
     g_sigPair[0] = -1;
     g_sigPair[1] = -1;
     sigNotifier.reset();
+#endif
 
     backendPtr = nullptr;
     tray.hide();
@@ -415,6 +455,17 @@ int handleDevicesSubcmd(const QStringList& rest) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    if (argc > 1) {
+        if (::AttachConsole(ATTACH_PARENT_PROCESS)) {
+            FILE* fpOut = nullptr;
+            FILE* fpErr = nullptr;
+            freopen_s(&fpOut, "CONOUT$", "w", stdout);
+            freopen_s(&fpErr, "CONOUT$", "w", stderr);
+        }
+        ::SetConsoleOutputCP(CP_UTF8);
+    }
+#endif
     QStringList rawArgs;
     for (int i = 1; i < argc; ++i) rawArgs.append(QString::fromLocal8Bit(argv[i]));
 

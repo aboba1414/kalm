@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QColor>
+#include <QDesktopServices>
 #include <QFont>
 #include <QMetaObject>
 #include <QPainter>
@@ -16,6 +17,7 @@
 #include <QRectF>
 #include <QSet>
 #include <QStandardPaths>
+#include <QUrl>
 #include <QVariantMap>
 
 namespace kalm {
@@ -534,6 +536,9 @@ void KalmBackend::setAutoSwitch(bool enabled) {
 }
 
 void KalmBackend::openSystemBluetoothSettings() {
+#ifdef _WIN32
+    QDesktopServices::openUrl(QUrl(QStringLiteral("ms-settings:bluetooth")));
+#else
     const QList<QStringList> cmds = {
         {QStringLiteral("systemsettings"), QStringLiteral("kcm_bluetooth")},
         {QStringLiteral("kcmshell6"), QStringLiteral("kcm_bluetooth")},
@@ -545,6 +550,7 @@ void KalmBackend::openSystemBluetoothSettings() {
             return;
         }
     }
+#endif
 }
 
 void KalmBackend::runDiagnosticProbe() {
@@ -714,6 +720,15 @@ void KalmTrayController::onActivated(QSystemTrayIcon::ActivationReason reason) {
     } else if (reason == QSystemTrayIcon::MiddleClick) {
         m_backend.toggleNoiseAsync();
     }
+}
+
+void KalmTrayController::showToast(const QString& title, const QString& body) {
+    QMetaObject::invokeMethod(
+        this,
+        [this, title, body]() {
+            m_tray.showMessage(title, body, m_tray.icon(), 2500);
+        },
+        Qt::QueuedConnection);
 }
 
 void KalmTrayController::syncDevicesMenu() {

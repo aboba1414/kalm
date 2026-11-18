@@ -5,45 +5,68 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <cstdint>
 #include <optional>
-#include <unistd.h>
 #include <utility>
 
 namespace kalm {
 
-// Move-only RAII POSIX file descriptor wrapper preventing socket/FD leaks.
-class UniqueFd {
+#ifdef _WIN32
+using SocketHandle = uintptr_t;
+inline constexpr SocketHandle kInvalidSocket = ~static_cast<uintptr_t>(0);
+#else
+using SocketHandle = int;
+inline constexpr SocketHandle kInvalidSocket = -1;
+#endif
+
+void closeSocketHandle(SocketHandle s) noexcept;
+void shutdownSocketHandle(SocketHandle s) noexcept;
+// Returns >0 if readable, 0 on timeout, <0 on error/hangup
+int pollSocketRead(SocketHandle s, int timeoutMs) noexcept;
+qint64 recvSocket(SocketHandle s, char* buf, size_t maxLen) noexcept;
+bool sendAll(SocketHandle s, const QByteArray& data);
+
+SocketHandle openLocalIpcClient(const QString& path);
+SocketHandle openLocalIpcServer(const QString& path);
+SocketHandle acceptLocalIpcClient(SocketHandle serverSock);
+
+// Move-only RAII socket wrapper preventing descriptor/HANDLE leaks on all OSes.
+class UniqueSocket {
 public:
-    UniqueFd() noexcept = default;
-    explicit UniqueFd(int fd) noexcept : m_fd(fd) {}
-    ~UniqueFd() { reset(); }
+    UniqueSocket() noexcept = default;
+    explicit UniqueSocket(SocketHandle s) noexcept : m_sock(s) {}
+    ~UniqueSocket() { reset(); }
 
-    UniqueFd(const UniqueFd&) = delete;
-    UniqueFd& operator=(const UniqueFd&) = delete;
+    UniqueSocket(const UniqueSocket&) = delete;
+    UniqueSocket& operator=(const UniqueSocket&) = delete;
 
-    UniqueFd(UniqueFd&& other) noexcept : m_fd(std::exchange(other.m_fd, -1)) {}
-    UniqueFd& operator=(UniqueFd&& other) noexcept {
+    UniqueSocket(UniqueSocket&& other) noexcept
+        : m_sock(std::exchange(other.m_sock, kInvalidSocket)) {}
+
+    UniqueSocket& operator=(UniqueSocket&& other) noexcept {
         if (this != &other) {
-            reset(std::exchange(other.m_fd, -1));
+            reset(std::exchange(other.m_sock, kInvalidSocket));
         }
         return *this;
     }
 
-    int get() const noexcept { return m_fd; }
-    explicit operator bool() const noexcept { return m_fd >= 0; }
+    SocketHandle get() const noexcept { return m_sock; }
+    explicit operator bool() const noexcept { return m_sock != kInvalidSocket; }
 
-    int release() noexcept { return std::exchange(m_fd, -1); }
+    SocketHandle release() noexcept { return std::exchange(m_sock, kInvalidSocket); }
 
-    void reset(int newFd = -1) noexcept {
-        if (m_fd >= 0) {
-            ::close(m_fd);
+    void reset(SocketHandle newSock = kInvalidSocket) noexcept {
+        if (m_sock != kInvalidSocket) {
+            closeSocketHandle(m_sock);
         }
-        m_fd = newFd;
+        m_sock = newSock;
     }
 
 private:
-    int m_fd = -1;
+    SocketHandle m_sock = kInvalidSocket;
 };
+
+using UniqueFd = UniqueSocket;
 
 struct BluezDevice {
     QString path;
@@ -65,9 +88,18 @@ std::optional<BluezDevice> findBluezByMac(const QString& mac);
 bool connectBluezDevice(const QString& mac);
 
 struct RfcommConnection {
-    UniqueFd fd;
+    UniqueSocket fd;
     QByteArray initialBytes;
 };
+
+// Opens a raw RFCOMM socket via 128-bit Service UUID (SDP lookup) without sending any protocol bytes.
+UniqueSocket openRfcommByUuid(const QString& mac,
+                              const QString& devPath,
+                              const QString& uuidStr,
+                              int timeoutMs = 2500);
+
+// Opens a raw RFCOMM socket directly to a numbered RFCOMM channel (1..30) without sending any bytes.
+UniqueSocket openRfcommByChannel(const QString& mac, int channel, int timeoutMs = 1500);
 
 // Opens a verified GAIA RFCOMM socket (handshake 0x0300 -> 0x8300 verified).
 // Throws std::runtime_error if connection fails.
@@ -76,7 +108,6 @@ RfcommConnection openGaiaRfcomm(const QString& mac,
                                 const QString& name = {},
                                 int timeoutMs = 2500);
 
-int getRfcommPeerChannel(int fd) noexcept;
-bool sendAll(int fd, const QByteArray& data);
+int getRfcommPeerChannel(SocketHandle s) noexcept;
 
 }  // namespace kalm
