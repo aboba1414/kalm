@@ -1,112 +1,94 @@
-name: Build & Release
+name: Build Windows (x64)
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
+    branches: [windows]
+    tags: ["v*-win*"]
   pull_request:
+    branches: [windows]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-linux-x86_64:
-    name: Build Binary & AppImage (x86_64)
-    runs-on: ubuntu-latest
-    container:
-      image: debian:trixie
+  build-windows-x64:
+    name: Build Windows Installer & Portable ZIP (x64)
+    runs-on: windows-latest
 
     steps:
-      - name: Install build and Qt6/Kirigami dependencies
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates \
-            cmake \
-            curl \
-            desktop-file-utils \
-            file \
-            g++ \
-            git \
-            kde-style-breeze \
-            kf6-breeze-icon-theme \
-            libqt6svg6 \
-            make \
-            patchelf \
-            python3 \
-            qmake6 \
-            qml6-module-org-kde-coreaddons \
-            qml6-module-org-kde-desktop \
-            qml6-module-org-kde-iconthemes \
-            qml6-module-org-kde-kirigami \
-            qml6-module-org-kde-kirigamiaddons-components \
-            qml6-module-org-kde-kirigamiaddons-datetime \
-            qml6-module-org-kde-kirigamiaddons-delegates \
-            qml6-module-org-kde-kirigamiaddons-formcard \
-            qml6-module-org-kde-kitemmodels \
-            qml6-module-org-kde-sonnet \
-            qml6-module-qt-labs-platform \
-            qml6-module-qt-labs-qmlmodels \
-            qml6-module-qt-labs-settings \
-            qml6-module-qtcore \
-            qml6-module-qtqml \
-            qml6-module-qtqml-models \
-            qml6-module-qtqml-workerscript \
-            qml6-module-qtquick \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-dialogs \
-            qml6-module-qtquick-effects \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtquick-nativestyle \
-            qml6-module-qtquick-shapes \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-vectorimage \
-            qml6-module-qtquick-window \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qt6-qpa-plugins \
-            qt6-svg-plugins \
-            qt6-wayland \
-            qt6-xdgdesktopportal-platformtheme
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Kalm (Release)
-        run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j$(nproc)
+      - name: Configure MSVC x64 developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
-      - name: Run unit & leak tests
+      - name: Install Qt 6.8 (MSVC 2022 x64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: "windows"
+          target: "desktop"
+          arch: "win64_msvc2022_64"
+          cache: true
+
+      - name: Build Kalm with CMake & Ninja
+        shell: pwsh
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Run unit & handle leak tests
+        shell: pwsh
         run: ctest --test-dir build --output-on-failure -V
 
-      - name: Package standalone binary & self-contained AppImage
+      - name: Package Portable ZIP & Inno Setup Installer (.exe)
+        shell: pwsh
         run: |
-          mkdir -p dist
-          cp build/kalm dist/kalm-linux-x86_64
-          strip -s dist/kalm-linux-x86_64
-          chmod +x dist/kalm-linux-x86_64 ./scripts/build-appimage.sh
-          ./scripts/build-appimage.sh build dist/Kalm-x86_64.AppImage
-          APPIMAGE_EXTRACT_AND_RUN=1 ./dist/Kalm-x86_64.AppImage --version
-          (cd dist && sha256sum Kalm-x86_64.AppImage kalm-linux-x86_64 > SHA256SUMS)
-          ls -lh dist/
+          New-Item -ItemType Directory -Force -Path dist/Kalm-win64 | Out-Null
+          Copy-Item build/kalm.exe dist/Kalm-win64/kalm.exe
+          Copy-Item models.json dist/Kalm-win64/models.json
+          Copy-Item README.md dist/Kalm-win64/README.md
+          Copy-Item -Recurse translations dist/Kalm-win64/translations
 
-      - name: Upload CI artifacts
+          windeployqt --release --qmldir qml --no-translations --no-opengl-sw --compiler-runtime dist/Kalm-win64/kalm.exe
+
+          # Verify deployed executable runs cleanly
+          $ver = & ./dist/Kalm-win64/kalm.exe --version
+          Write-Host "Verified binary version: $ver"
+
+          Compress-Archive -Path "dist/Kalm-win64/*" -DestinationPath "dist/Kalm-win64-portable.zip" -Force
+
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc "packaging\windows\kalm.iss"
+
+          Push-Location dist
+          $hashes = Get-FileHash -Algorithm SHA256 Kalm-win64-setup.exe, Kalm-win64-portable.zip |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" }
+          $hashes | Set-Content -Encoding ascii SHA256SUMS-windows.txt
+          Get-ChildItem Kalm-win64-setup.exe, Kalm-win64-portable.zip, SHA256SUMS-windows.txt
+          Pop-Location
+
+      - name: Upload Windows CI artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kalm-linux-x86_64-artifacts
+          name: kalm-windows-x64-artifacts
           path: |
-            dist/Kalm-x86_64.AppImage
-            dist/kalm-linux-x86_64
-            dist/SHA256SUMS
+            dist/Kalm-win64-setup.exe
+            dist/Kalm-win64-portable.zip
+            dist/SHA256SUMS-windows.txt
 
-      - name: Publish GitHub Release on tag
+      - name: Publish Windows Release (windows branch)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          target_commitish: windows
+          prerelease: true
+          make_latest: false
           generate_release_notes: true
           files: |
-            dist/Kalm-x86_64.AppImage
-            dist/kalm-linux-x86_64
-            dist/SHA256SUMS
+            dist/Kalm-win64-setup.exe
+            dist/Kalm-win64-portable.zip
+            dist/SHA256SUMS-windows.txt

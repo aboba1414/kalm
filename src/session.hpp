@@ -3,6 +3,7 @@
 
 #include "protocol.hpp"
 #include "registry.hpp"
+#include "transport.hpp"
 
 #include <QJsonObject>
 #include <QList>
@@ -86,7 +87,7 @@ private:
     ErrorCallback m_onError;
 
     mutable QRecursiveMutex m_lock;
-    int m_sockFd = -1;
+    SocketHandle m_sockFd = kInvalidSocket;
     WireProfile m_profile;
     EarbudState m_state;
 
@@ -103,7 +104,10 @@ private:
 
 class IpcServer {
 public:
-    IpcServer(KalmSession& session, std::function<void(const QString&)> onShowWindow = {});
+    using ShowCallback = std::function<void(const QString&)>;
+    using NotifyCallback = std::function<void(const QString&, const QString&)>;
+
+    IpcServer(KalmSession& session, ShowCallback onShowWindow = {}, NotifyCallback onNotify = {});
     ~IpcServer();
 
     bool start();
@@ -111,13 +115,14 @@ public:
 
 private:
     void acceptLoop();
-    void handleClient(int clientFd);
+    void handleClient(SocketHandle clientFd);
     QJsonObject dispatch(const QJsonObject& req);
 
     KalmSession& m_session;
-    std::function<void(const QString&)> m_onShowWindow;
+    ShowCallback m_onShowWindow;
+    NotifyCallback m_onNotify;
     QString m_path;
-    int m_serverFd = -1;
+    SocketHandle m_serverFd = kInvalidSocket;
     std::atomic<bool> m_stop{false};
     std::thread m_thread;
 };

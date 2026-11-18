@@ -194,6 +194,7 @@ public:
 
     void bindWindow(QWindow* win) { m_window = win; }
     void hide() { m_tray.hide(); }
+    void showToast(const QString& title, const QString& body);
 
 private Q_SLOTS:
     void onActivated(QSystemTrayIcon::ActivationReason reason);

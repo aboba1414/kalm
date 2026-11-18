@@ -8,8 +8,6 @@
 #include <QTextStream>
 
 #include <algorithm>
-#include <poll.h>
-#include <sys/socket.h>
 
 namespace kalm {
 
@@ -49,20 +47,18 @@ QString formatFrameSummary(const Frame& f) {
         .arg(hexSpaced(f.payload));
 }
 
-QList<Frame> drainFrames(int fd, FrameDecoder& dec, int waitMs) {
+QList<Frame> drainFrames(SocketHandle fd, FrameDecoder& dec, int waitMs) {
     QList<Frame> out;
     QElapsedTimer t;
     t.start();
     char buf[2048];
     while (t.elapsed() < waitMs) {
         const int rem = std::max(20, static_cast<int>(waitMs - t.elapsed()));
-        pollfd pfd{fd, POLLIN, 0};
-        const int pr = ::poll(&pfd, 1, rem);
+        const int pr = pollSocketRead(fd, rem);
         if (pr <= 0) break;
-        if (pfd.revents & (POLLERR | POLLHUP)) break;
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        const qint64 n = recvSocket(fd, buf, sizeof(buf));
         if (n <= 0) break;
-        out.append(dec.feed(QByteArray(buf, n)));
+        out.append(dec.feed(QByteArray(buf, static_cast<qsizetype>(n))));
     }
     return out;
 }
@@ -133,7 +129,7 @@ QString generateDiagnosticReport(DeviceRegistry& registry,
     }
 
     const BluezDevice& dev = *devOpt;
-    out << "### BlueZ Device Info\n"
+    out << "### Bluetooth Device Info\n"
         << "- **Name:** `" << dev.name << "`\n"
         << "- **MAC (OUI):** `" << maskMacForReport(dev.mac) << "`\n"
         << "- **Modalias:** `" << (dev.modalias.isEmpty() ? QStringLiteral("n/a") : dev.modalias) << "`\n"

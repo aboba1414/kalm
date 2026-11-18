@@ -11,7 +11,16 @@
 #include <QTemporaryDir>
 #include <cstdlib>
 #include <iostream>
+
+#ifdef __GLIBC__
 #include <malloc.h>
+#endif
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #define KALM_CHECK(cond)                                                                      \
     do {                                                                                      \
@@ -108,9 +117,15 @@ int main() {
     KALM_CHECK(d2.mac == u"AA:BB:CC:11:22:33");
     KALM_CHECK(reg.activeMac() == u"1C:BA:B8:0F:5A:0F");
 
-    // 5. Heap & File-Descriptor Leak Stress Test (2,000 decode/JSON cycles + 100 IPC roundtrips)
-    auto countOpenFds = []() -> qsizetype {
-        return QDir(QStringLiteral("/proc/self/fd")).entryList(QDir::NoDotAndDotDot).size();
+    // 5. Heap & Handle/FD Leak Stress Test (10,000 decode/JSON cycles + 1,000 IPC roundtrips)
+    auto countOpenHandles = []() -> long {
+#ifdef _WIN32
+        DWORD count = 0;
+        ::GetProcessHandleCount(::GetCurrentProcess(), &count);
+        return static_cast<long>(count);
+#else
+        return static_cast<long>(QDir(QStringLiteral("/proc/self/fd")).entryList(QDir::NoDotAndDotDot).size());
+#endif
     };
 
     qputenv("XDG_RUNTIME_DIR", tmp.path().toUtf8());
@@ -118,7 +133,6 @@ int main() {
     IpcServer srv(testSession);
     KALM_CHECK(srv.start());
 
-    // Warm-up 100 cycles so Qt caches & glibc per-thread tcache bins reach steady state
     for (int w = 0; w < 100; ++w) {
         initI18n((w % 2 == 0) ? QStringLiteral("en") : QStringLiteral("ru"));
         FrameDecoder warmDec;
@@ -129,8 +143,10 @@ int main() {
         (void)ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("status")}}, 1000);
     }
 
-    const qsizetype fdsBefore = countOpenFds();
+    const long fdsBefore = countOpenHandles();
+#ifdef __GLIBC__
     const size_t h0 = mallinfo2().uordblks;
+#endif
 
     for (int iter = 0; iter < 10000; ++iter) {
         FrameDecoder loopDec;
@@ -142,12 +158,16 @@ int main() {
         const auto json = loopSt.toJson();
         KALM_CHECK(json.value(QStringLiteral("connected")).toBool());
     }
+#ifdef __GLIBC__
     const size_t h1 = mallinfo2().uordblks;
+#endif
 
     for (int iter = 0; iter < 1000; ++iter) {
         initI18n((iter % 2 == 0) ? QStringLiteral("en") : QStringLiteral("ru"));
     }
+#ifdef __GLIBC__
     const size_t h2 = mallinfo2().uordblks;
+#endif
 
     for (int i = 0; i < 500; ++i) {
         const auto pong = ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("ping")}}, 1000);
@@ -155,24 +175,31 @@ int main() {
         const auto stResp = ipcRequest(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("status")}}, 1000);
         KALM_CHECK(stResp.has_value() && stResp->value(QStringLiteral("ok")).toBool());
     }
+#ifdef __GLIBC__
     const size_t h3 = mallinfo2().uordblks;
-    const qsizetype fdsDuring = countOpenFds();
+#endif
+    const long fdsDuring = countOpenHandles();
 
     srv.stop();
-    const qsizetype fdsAfterStop = countOpenFds();
+    const long fdsAfterStop = countOpenHandles();
 
+#ifdef __GLIBC__
     const ssize_t dDecode = static_cast<ssize_t>(h1) - static_cast<ssize_t>(h0);
     const ssize_t dI18n = static_cast<ssize_t>(h2) - static_cast<ssize_t>(h1);
     const ssize_t dIpc = static_cast<ssize_t>(h3) - static_cast<ssize_t>(h2);
-
     std::cout << "Leak check: FDs=" << fdsBefore << "->" << fdsDuring << " (after stop=" << fdsAfterStop
               << "), 10000 decode=" << dDecode << "B, 1000 i18n=" << dI18n << "B, 1000 IPC=" << dIpc << "B\n";
-
     KALM_CHECK(fdsDuring == fdsBefore);
     KALM_CHECK(fdsAfterStop < fdsBefore);
     KALM_CHECK(dDecode <= 16384);
     KALM_CHECK(dI18n <= 16384);
     KALM_CHECK(dIpc <= 16384);
+#else
+    std::cout << "Handle check: before=" << fdsBefore << " during=" << fdsDuring
+              << " afterStop=" << fdsAfterStop << "\n";
+    // Allow tiny OS background thread pool variance on Windows, ensure no 1000-socket handle leak!
+    KALM_CHECK(fdsDuring - fdsBefore < 20);
+#endif
 
     std::cout << "All C++ tests passed.\n";
     return 0;

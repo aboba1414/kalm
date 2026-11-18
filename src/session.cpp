@@ -12,50 +12,47 @@
 #include <QJsonDocument>
 #include <QMap>
 #include <QMutexLocker>
+#include <QStandardPaths>
 
 #include <algorithm>
-#include <cerrno>
-#include <cstring>
-#include <poll.h>
+#include <chrono>
 #include <stdexcept>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
+#include <thread>
+
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 namespace kalm {
 
 QString ipcSocketPath() {
+#ifdef _WIN32
+    QString base = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+    if (base.isEmpty()) base = QDir::tempPath();
+    const QString dir = base + QStringLiteral("/kalm");
+    QDir().mkpath(dir);
+    return dir + QStringLiteral("/kalm.sock");
+#else
     QString runtimeDir = qEnvironmentVariable("XDG_RUNTIME_DIR");
     if (runtimeDir.isEmpty()) {
         runtimeDir = QStringLiteral("/tmp/kalm-%1").arg(::getuid());
     }
     QDir().mkpath(runtimeDir);
     return runtimeDir + QStringLiteral("/kalm.sock");
+#endif
 }
 
 std::optional<QJsonObject> ipcRequest(const QJsonObject& payload, int timeoutMs) {
     const QString path = ipcSocketPath();
     if (!QFile::exists(path)) return std::nullopt;
 
-    const QByteArray pathUtf8 = path.toUtf8();
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (static_cast<size_t>(pathUtf8.size()) >= sizeof(addr.sun_path)) return std::nullopt;
-    std::memcpy(addr.sun_path, pathUtf8.constData(), static_cast<size_t>(pathUtf8.size()));
-
-    UniqueFd fd(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    UniqueSocket fd(openLocalIpcClient(path));
     if (!fd) return std::nullopt;
-
-    if (::connect(fd.get(), reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-        return std::nullopt;
-    }
 
     const QByteArray reqBytes = QJsonDocument(payload).toJson(QJsonDocument::Compact);
     if (!sendAll(fd.get(), reqBytes)) {
         return std::nullopt;
     }
-    ::shutdown(fd.get(), SHUT_WR);
 
     QByteArray respBytes;
     QElapsedTimer timer;
@@ -63,12 +60,11 @@ std::optional<QJsonObject> ipcRequest(const QJsonObject& payload, int timeoutMs)
     char buf[4096];
     while (timer.elapsed() < timeoutMs) {
         const int rem = std::max(50, static_cast<int>(timeoutMs - timer.elapsed()));
-        pollfd pfd{fd.get(), POLLIN, 0};
-        const int pr = ::poll(&pfd, 1, rem);
+        const int pr = pollSocketRead(fd.get(), rem);
         if (pr <= 0) break;
-        const ssize_t n = ::recv(fd.get(), buf, sizeof(buf), 0);
+        const qint64 n = recvSocket(fd.get(), buf, sizeof(buf));
         if (n <= 0) break;
-        respBytes.append(buf, n);
+        respBytes.append(buf, static_cast<qsizetype>(n));
     }
 
     if (respBytes.isEmpty()) return std::nullopt;
@@ -186,12 +182,12 @@ void KalmSession::emitError(const QString& msg) {
 }
 
 void KalmSession::closeSocket(bool resetIdentity) {
-    int fd = -1;
+    SocketHandle fd = kInvalidSocket;
     bool wasConnected = false;
     {
         QMutexLocker lock(&m_lock);
         fd = m_sockFd;
-        m_sockFd = -1;
+        m_sockFd = kInvalidSocket;
         wasConnected = m_state.connected;
         if (resetIdentity) {
             m_state = EarbudState{};
@@ -202,9 +198,9 @@ void KalmSession::closeSocket(bool resetIdentity) {
             m_state.caseBattery.stale = true;
         }
     }
-    if (fd >= 0) {
-        ::shutdown(fd, SHUT_RDWR);
-        ::close(fd);
+    if (fd != kInvalidSocket) {
+        shutdownSocketHandle(fd);
+        closeSocketHandle(fd);
     }
     if (wasConnected || resetIdentity) {
         emitState();
@@ -212,12 +208,12 @@ void KalmSession::closeSocket(bool resetIdentity) {
 }
 
 bool KalmSession::sendRaw(const QByteArray& data) {
-    int fd = -1;
+    SocketHandle fd = kInvalidSocket;
     {
         QMutexLocker lock(&m_lock);
         fd = m_sockFd;
     }
-    if (fd < 0) return false;
+    if (fd == kInvalidSocket) return false;
     if (!sendAll(fd, data)) {
         closeSocket(false);
         return false;
@@ -406,7 +402,7 @@ bool KalmSession::setDeviceConnection(const QString& targetMac, bool connect) {
         p = m_profile;
     }
     if (!sendRaw(buildSetMultiConnect(snap.pairedDevices, targetMac, connect, p))) return false;
-    ::usleep(400 * 1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
     sendRaw(buildQueryMultiConnect(p));
     return true;
 }
@@ -428,7 +424,7 @@ QString KalmSession::runProbe(const QString& deviceQuery, int listenSeconds) {
     m_paused.store(true);
     closeSocket(false);
     wakeWorker();
-    ::usleep(300 * 1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     QString report;
     try {
@@ -458,6 +454,7 @@ void KalmSession::runLoop() {
             sleepInterruptible(300);
             continue;
         }
+
         QMap<QString, BluezDevice> bluezMap;
         for (const auto& d : listBluezDevices(false, false)) {
             bluezMap.insert(d.mac, d);
@@ -529,7 +526,7 @@ void KalmSession::runLoop() {
         }
 
         const WireProfile profile = selectProfile(chosenBluez->name);
-        const int rawConnFd = conn.fd.release();
+        const SocketHandle rawConnFd = conn.fd.release();
         {
             QMutexLocker lock(&m_lock);
             m_sockFd = rawConnFd;
@@ -555,27 +552,20 @@ void KalmSession::runLoop() {
         pollTimer.start();
         char buf[2048];
         while (!m_stop.load()) {
-            int curFd = -1;
+            SocketHandle curFd = kInvalidSocket;
             {
                 QMutexLocker lock(&m_lock);
                 curFd = m_sockFd;
             }
             if (curFd != rawConnFd) break;
 
-            pollfd pfd{rawConnFd, POLLIN, 0};
-            const int pr = ::poll(&pfd, 1, 1000);
-            if (pr < 0) {
-                if (errno == EINTR) continue;
-                break;
-            }
+            const int pr = pollSocketRead(rawConnFd, 1000);
+            if (pr < 0) break;
             if (pr > 0) {
-                if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
-                if (pfd.revents & POLLIN) {
-                    const ssize_t n = ::recv(rawConnFd, buf, sizeof(buf), 0);
-                    if (n <= 0) break;
-                    const auto frames = decoder.feed(QByteArray(buf, n));
-                    if (!frames.isEmpty()) handleFrames(frames);
-                }
+                const qint64 n = recvSocket(rawConnFd, buf, sizeof(buf));
+                if (n <= 0) break;
+                const auto frames = decoder.feed(QByteArray(buf, static_cast<qsizetype>(n)));
+                if (!frames.isEmpty()) handleFrames(frames);
             }
 
             if (pollTimer.elapsed() >= 30000) {
@@ -636,8 +626,11 @@ void KalmSession::handleFrames(const QList<Frame>& frames) {
 
 // ---- IpcServer ----
 
-IpcServer::IpcServer(KalmSession& session, std::function<void(const QString&)> onShowWindow)
-    : m_session(session), m_onShowWindow(std::move(onShowWindow)), m_path(ipcSocketPath()) {}
+IpcServer::IpcServer(KalmSession& session, ShowCallback onShowWindow, NotifyCallback onNotify)
+    : m_session(session),
+      m_onShowWindow(std::move(onShowWindow)),
+      m_onNotify(std::move(onNotify)),
+      m_path(ipcSocketPath()) {}
 
 IpcServer::~IpcServer() { stop(); }
 
@@ -650,23 +643,9 @@ bool IpcServer::start() {
         QFile::remove(m_path);
     }
 
-    const QByteArray pathUtf8 = m_path.toUtf8();
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (static_cast<size_t>(pathUtf8.size()) >= sizeof(addr.sun_path)) return false;
-    std::memcpy(addr.sun_path, pathUtf8.constData(), static_cast<size_t>(pathUtf8.size()));
+    m_serverFd = openLocalIpcServer(m_path);
+    if (m_serverFd == kInvalidSocket) return false;
 
-    UniqueFd fd(::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
-    if (!fd) return false;
-    if (::bind(fd.get(), reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-        return false;
-    }
-    ::chmod(pathUtf8.constData(), 0600);
-    if (::listen(fd.get(), 8) < 0) {
-        return false;
-    }
-
-    m_serverFd = fd.release();
     m_stop.store(false);
     m_thread = std::thread(&IpcServer::acceptLoop, this);
     return true;
@@ -674,41 +653,39 @@ bool IpcServer::start() {
 
 void IpcServer::stop() {
     m_stop.store(true);
-    if (m_serverFd >= 0) {
-        ::shutdown(m_serverFd, SHUT_RDWR);
+    if (m_serverFd != kInvalidSocket) {
+        shutdownSocketHandle(m_serverFd);
+        closeSocketHandle(m_serverFd);
+        m_serverFd = kInvalidSocket;
     }
     if (m_thread.joinable()) {
         m_thread.join();
-    }
-    if (m_serverFd >= 0) {
-        ::close(m_serverFd);
-        m_serverFd = -1;
     }
     QFile::remove(m_path);
 }
 
 void IpcServer::acceptLoop() {
-    while (!m_stop.load() && m_serverFd >= 0) {
-        pollfd pfd{m_serverFd, POLLIN, 0};
-        const int pr = ::poll(&pfd, 1, 400);
-        if (pr <= 0) continue;
-        const int clientFd = ::accept4(m_serverFd, nullptr, nullptr, SOCK_CLOEXEC);
-        if (clientFd < 0) {
-            if (errno == EINTR) continue;
-            break;
+    while (!m_stop.load()) {
+        const SocketHandle srv = m_serverFd;
+        if (srv == kInvalidSocket) break;
+        const int pr = pollSocketRead(srv, 400);
+        if (pr <= 0) {
+            if (pr < 0) break;
+            continue;
         }
+        const SocketHandle clientFd = acceptLocalIpcClient(srv);
+        if (clientFd == kInvalidSocket) break;
         handleClient(clientFd);
     }
 }
 
-void IpcServer::handleClient(int rawClientFd) {
-    UniqueFd clientFd(rawClientFd);
+void IpcServer::handleClient(SocketHandle rawClientFd) {
+    UniqueSocket clientFd(rawClientFd);
     QByteArray raw;
     char buf[4096];
-    pollfd pfd{clientFd.get(), POLLIN, 0};
-    if (::poll(&pfd, 1, 2000) > 0 && (pfd.revents & POLLIN)) {
-        const ssize_t n = ::recv(clientFd.get(), buf, sizeof(buf), 0);
-        if (n > 0) raw.append(buf, n);
+    if (pollSocketRead(clientFd.get(), 2000) > 0) {
+        const qint64 n = recvSocket(clientFd.get(), buf, sizeof(buf));
+        if (n > 0) raw.append(buf, static_cast<qsizetype>(n));
     }
 
     QJsonObject resp;
@@ -734,6 +711,13 @@ QJsonObject IpcServer::dispatch(const QJsonObject& req) {
     }
     if (cmd == u"show") {
         if (m_onShowWindow) m_onShowWindow(req.value(QStringLiteral("token")).toString());
+        return QJsonObject{{QStringLiteral("ok"), true}};
+    }
+    if (cmd == u"notify") {
+        if (m_onNotify) {
+            m_onNotify(req.value(QStringLiteral("title")).toString(),
+                       req.value(QStringLiteral("body")).toString());
+        }
         return QJsonObject{{QStringLiteral("ok"), true}};
     }
     if (cmd == u"status") {
@@ -847,7 +831,7 @@ TargetInfo resolveOneshotTarget(DeviceRegistry& reg, const QString& query) {
     throw std::runtime_error(trKey("err_no_vivo_found").toStdString());
 }
 
-bool recvUntil(int fd, FrameDecoder& dec, EarbudState& state, const WireProfile& profile,
+bool recvUntil(SocketHandle fd, FrameDecoder& dec, EarbudState& state, const WireProfile& profile,
                std::function<bool(const Frame&)> stopWhen, int timeoutMs) {
     QElapsedTimer timer;
     timer.start();
@@ -855,16 +839,15 @@ bool recvUntil(int fd, FrameDecoder& dec, EarbudState& state, const WireProfile&
     char buf[2048];
     while (timer.elapsed() < timeoutMs) {
         const int rem = std::min(400, std::max(50, static_cast<int>(timeoutMs - timer.elapsed())));
-        pollfd pfd{fd, POLLIN, 0};
-        const int pr = ::poll(&pfd, 1, rem);
-        if (pr <= 0) {
+        const int pr = pollSocketRead(fd, rem);
+        if (pr == 0) {
             if (matched) return true;
             continue;
         }
-        if (pfd.revents & (POLLERR | POLLHUP)) break;
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if (pr < 0) break;
+        const qint64 n = recvSocket(fd, buf, sizeof(buf));
         if (n <= 0) break;
-        for (const Frame& f : dec.feed(QByteArray(buf, n))) {
+        for (const Frame& f : dec.feed(QByteArray(buf, static_cast<qsizetype>(n)))) {
             const QString tag = applyFrameToState(f, state);
             if (tag == u"time_request") {
                 sendAll(fd, buildHostTimeResponse(profile));
@@ -898,7 +881,7 @@ QJsonObject runOneshot(DeviceRegistry& reg, const QString& query, Fn&& action) {
 }  // namespace
 
 QJsonObject oneshotStatus(DeviceRegistry& reg, const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         for (const QByteArray& pkt : buildRegisterNotifications()) sendAll(fd, pkt);
         for (const QByteArray& pkt : {
                  buildQueryBattery(),
@@ -931,9 +914,8 @@ QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
                             std::optional<int> ancLevel,
                             std::optional<int> transEffect,
                             const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [=](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [=](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildQueryBattery());
-        // Query current noise state first so we preserve existing ancLevel / transEffect if not explicitly overridden
         if (!ancLevel.has_value() || !transEffect.has_value()) {
             sendAll(fd, buildQueryNoiseMode(profile));
             recvUntil(fd, dec, state, profile, [](const Frame& f) { return f.command == kCmdReportNoiseMode; }, 800);
@@ -956,7 +938,7 @@ QJsonObject oneshotSetNoise(DeviceRegistry& reg, NoiseMode mode,
 QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycle, const QString& deviceQuery) {
     const QList<NoiseMode> order =
         cycle.isEmpty() ? QList<NoiseMode>{NoiseMode::Anc, NoiseMode::Transparency, NoiseMode::Off} : cycle;
-    return runOneshot(reg, deviceQuery, [&order](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [&order](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildQueryBattery());
         sendAll(fd, buildQueryNoiseMode(profile));
         recvUntil(fd, dec, state, profile, [](const Frame& f) { return f.command == kCmdReportNoiseMode; }, 1500);
@@ -979,7 +961,7 @@ QJsonObject oneshotToggleNoise(DeviceRegistry& reg, const QList<NoiseMode>& cycl
 }
 
 QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [effectId](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [effectId](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildSetAudioEffect(effectId, profile));
         const bool ok = recvUntil(
             fd, dec, state, profile,
@@ -990,7 +972,7 @@ QJsonObject oneshotSetEq(DeviceRegistry& reg, int effectId, const QString& devic
 }
 
 QJsonObject oneshotSetGame(DeviceRegistry& reg, bool enabled, const QString& deviceQuery) {
-    return runOneshot(reg, deviceQuery, [enabled](int fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
+    return runOneshot(reg, deviceQuery, [enabled](SocketHandle fd, const WireProfile& profile, EarbudState& state, FrameDecoder& dec) {
         sendAll(fd, buildSetLowLatency(enabled, profile));
         const bool ok = recvUntil(
             fd, dec, state, profile,

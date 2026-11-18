@@ -1,6 +1,6 @@
 # Kalm
 
-Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlling active noise cancellation (ANC), sound profiles, and device settings on **vivo / iQOO TWS** earbuds (verified on *vivo TWS 5 Hi-Fi*) over Bluetooth RFCOMM (Compact GAIA protocol).
+Native desktop application (**C++20 / Qt 6**) for controlling active noise cancellation (ANC), sound profiles, and device settings on **vivo / iQOO TWS** earbuds (verified on *vivo TWS 5 Hi-Fi*) over Bluetooth RFCOMM (Compact GAIA protocol) on **Windows 10/11** and **Linux**.
 
 > **Note:** This project was built with the assistance of AI and is intended primarily for personal use.
 
@@ -23,14 +23,19 @@ Native Linux desktop application (**C++20 / Qt 6 / KDE Kirigami**) for controlli
 
 ## Quick Start & Running
 
-**Option 1 — Self-Contained AppImage (no Qt6/Kirigami dependencies required):**
+**Windows 10 / 11 (x64 — no dependencies required):**
+Download from [Releases](https://github.com/p4radigma/kalm/releases):
+- **`Kalm-win64-setup.exe`** — single-file user installer (no admin rights required, optional Start Menu / Desktop / tray autostart), **or**
+- **`Kalm-win64-portable.zip`** — portable archive: extract anywhere and run `kalm.exe`.
+
+**Linux — Option 1 (Self-Contained AppImage, no Qt6/Kirigami dependencies required):**
 Download `Kalm-x86_64.AppImage` from [Releases](https://github.com/p4radigma/kalm/releases) (only BlueZ/Bluetooth is needed on the host):
 ```bash
 chmod +x Kalm-x86_64.AppImage
 ./Kalm-x86_64.AppImage
 ```
 
-**Option 2 — Lightweight Native Binary (~550 KB, uses system Qt6 & Kirigami):**
+**Linux — Option 2 (Lightweight Native Binary ~550 KB, uses system Qt6 & Kirigami):**
 Install runtime packages for your distro (see [Dependencies](#dependencies)), download `kalm-linux-x86_64` from [Releases](https://github.com/p4radigma/kalm/releases), and run:
 ```bash
 chmod +x kalm-linux-x86_64
@@ -114,8 +119,16 @@ sudo xbps-install -S cmake gcc qt6-base-devel qt6-declarative-devel \
 
 ---
 
-## Build & Install (All Distros)
+## Build & Install
 
+**Windows (Visual Studio 2022 + Qt 6.8+ + CMake/Ninja):**
+```powershell
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+windeployqt --release --qmldir qml build/kalm.exe
+```
+
+**Linux (All Distros):**
 ```bash
 git clone https://github.com/p4radigma/kalm.git
 cd kalm
